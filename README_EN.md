@@ -42,7 +42,7 @@ target("your_target")
 include(FetchContent)
 FetchContent_Declare(oneplog
     GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
-    GIT_TAG v0.0.1)
+    GIT_TAG v0.1.0)
 FetchContent_MakeAvailable(oneplog)
 target_link_libraries(your_target PRIVATE oneplog)
 ```
@@ -89,40 +89,60 @@ int main() {
     // One-line initialization (async mode + console output)
     oneplog::Init();
     
-    // Use log:: static class for logging
-    log::Info("Hello, {}!", "onePlog");
-    log::Error("Error code: {}", 42);
+    // Use global functions for logging (recommended)
+    oneplog::Info("Hello, {}!", "onePlog");
+    oneplog::Error("Error code: {}", 42);
+    oneplog::Debug("Debug message");  // Optimized away in Release mode
     
-    // Or use global functions
-    oneplog::Info("Global function style");
+    // Or use log:: static class (legacy API)
+    log::Info("Static class style");
     
     // Using macros
     ONEPLOG_INFO("Macro logging: {}", "test");
     
-    // Shutdown
+    // Flush and shutdown
+    oneplog::Flush();
     oneplog::Shutdown();
     return 0;
 }
 ```
 
-### Custom Configuration
+### Custom Logger Instance
+
+When you need non-default configuration (e.g., sync mode, custom level, WFC enabled), use a custom Logger instance:
 
 ```cpp
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // Initialize with custom config
-    oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::Sync;  // Sync mode
-    config.level = oneplog::Level::Debug;
-    oneplog::Init(config);
+    // Create sync mode Logger (template params: Mode, Level, EnableWFC)
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Debug, false> logger;
+    logger.SetSink(std::make_shared<oneplog::ConsoleSink>());
+    logger.SetFormat(std::make_shared<oneplog::ConsoleFormat>());
+    logger.Init();
     
-    // Dynamically modify Sink and Format
-    oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log"));
-    oneplog::SetFormat(std::make_shared<oneplog::FileFormat>());
+    logger.Info("Custom logger message");
+    logger.Debug("Debug info");
     
-    log::Info("Custom logger message");
-    
+    logger.Shutdown();
+    return 0;
+}
+```
+
+### Customize Default Logger Type
+
+Customize the default Logger type used by global API via macros:
+
+```cpp
+// Define before including header
+#define ONEPLOG_DEFAULT_MODE oneplog::Mode::Sync
+#define ONEPLOG_DEFAULT_LEVEL oneplog::Level::Debug
+#define ONEPLOG_DEFAULT_ENABLE_WFC true
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    oneplog::Init();  // Uses customized default type
+    oneplog::Info("Now using Sync mode with Debug level");
     oneplog::Shutdown();
     return 0;
 }
@@ -415,6 +435,44 @@ int main(int argc, char* argv[]) {
 | `ONEPLOG_BUILD_EXAMPLES` | Build examples | OFF |
 | `ONEPLOG_USE_FMT` | Use fmt library | OFF |
 
+### Compile Macros
+
+#### Mode Selection Macros
+
+| Macro | Description |
+|-------|-------------|
+| `ONEPLOG_SYNC_ONLY` | Only compile sync mode code |
+| `ONEPLOG_ASYNC_ONLY` | Only compile async mode code |
+| `ONEPLOG_MPROC_ONLY` | Only compile multi-process mode code |
+
+Note: These three macros are mutually exclusive.
+
+#### Compile-time Log Level
+
+Use `ONEPLOG_ACTIVE_LEVEL` macro to completely remove log code below the specified level at compile time:
+
+| Value | Level | Description |
+|-------|-------|-------------|
+| 0 | Trace | Default, all levels enabled |
+| 1 | Debug | Remove Trace |
+| 2 | Info | Remove Trace, Debug |
+| 3 | Warn | Remove Trace, Debug, Info |
+| 4 | Error | Remove Trace, Debug, Info, Warn |
+| 5 | Critical | Only Critical |
+| 6 | Off | Disable all logging |
+
+Example:
+```cpp
+// Define before including header
+#define ONEPLOG_ACTIVE_LEVEL 3  // Only Warn and above will be compiled
+#include <oneplog/oneplog.hpp>
+```
+
+Or in CMake:
+```cmake
+target_compile_definitions(your_target PRIVATE ONEPLOG_ACTIVE_LEVEL=3)
+```
+
 ## Example Programs
 
 | Example | Description |
@@ -473,6 +531,33 @@ xmake -r benchmark_compare
 ./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
 ```
 
+### WFC Compile-Time Overhead Test
+
+Test the performance overhead of enabling WFC compile-time flag (`EnableWFC=true`) without using WFC methods (average ± standard deviation over 100 runs):
+
+| Test | WFC Disabled | WFC Enabled | Overhead |
+|------|--------------|-------------|----------|
+| Async Mode (1 Thread) | 28.1M ± 4.2M ops/sec | 28.8M ± 5.0M ops/sec | +2.4% (noise) |
+| Async Mode (4 Threads) | 13.4M ± 1.3M ops/sec | 13.1M ± 1.2M ops/sec | -2.1% (noise) |
+| MProc Mode (1 Thread) | 15.4M ± 3.2M ops/sec | 16.4M ± 3.5M ops/sec | +6.2% (noise) |
+| MProc Mode (4 Threads) | 10.1M ± 1.0M ops/sec | 10.2M ± 1.2M ops/sec | no significant difference |
+
+**Note**: In the current implementation, the consumer thread (WriterThread) checks the WFC flag (`IsWFCEnabled()`) for every log entry read, regardless of whether the `EnableWFC` template parameter is `true` or `false`. This is because `RingBufferBase` doesn't know about the template parameter.
+
+**Why the overhead is small**:
+- Atomic read (`atomic<uint8_t>::load`) is very fast on modern CPUs (~1-2 nanoseconds)
+- CPU branch predictor handles the almost-always-false branch very well
+- The `wfc` field is in the same cache line as `state`, already loaded when reading `state`
+
+**Conclusion**: The WFC compile-time flag has negligible overhead when not using WFC methods.
+
+Run WFC overhead test:
+```bash
+cd example
+xmake -P . -m release
+./build/macosx/arm64/release/benchmark_wfc_overhead -r 100
+```
+
 Command line arguments:
 - `-i <iterations>`: Number of iterations per test (default: 500000)
 - `-t <threads>`: Number of threads for multi-threaded tests (default: 4)
@@ -492,10 +577,70 @@ Command line arguments:
 - [x] PipelineThread implementation (multi-process mode pipeline thread)
 - [x] WriterThread implementation (log output thread)
 - [x] Logger implementation (Sync/Async/MProc modes, WFC support)
+- [x] Template Logger implementation (compile-time mode/level selection, zero-overhead abstraction)
 - [x] Global API (DefaultLogger, convenience functions, process/module names)
 - [x] Macros (ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL, WFC, conditional logging, compile-time disable)
 - [x] MemoryPool implementation (lock-free memory pool, pre-allocation, allocate/deallocate)
 - [x] Example code (sync mode, async mode, multi-process mode, exec child process, WFC)
+
+## Template Logger
+
+onePlog uses a template-based `Logger` class that allows specifying operating mode, minimum log level, and WFC functionality at compile time, achieving zero-overhead abstraction.
+
+### Template Parameters
+
+```cpp
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+class Logger;
+```
+
+- `M`: Operating mode (`Mode::Sync`, `Mode::Async`, `Mode::MProc`)
+- `L`: Compile-time minimum log level (log calls below this level are optimized away)
+- `EnableWFC`: Whether to enable WFC (Wait For Completion) functionality
+
+### Type Aliases
+
+```cpp
+// Predefined type aliases
+oneplog::SyncLogger<>           // Sync mode, default level
+oneplog::AsyncLogger<>          // Async mode, default level
+oneplog::MProcLogger<>          // Multi-process mode, default level
+
+oneplog::DebugLogger            // Async mode, Debug level
+oneplog::ReleaseLogger          // Async mode, Info level
+oneplog::DebugLoggerWFC         // Async mode, Debug level, WFC enabled
+oneplog::ReleaseLoggerWFC       // Async mode, Info level, WFC enabled
+```
+
+### Compile-time Level Filtering
+
+The template parameter `L` specifies the compile-time minimum log level. Log calls below this level are completely optimized away by the compiler:
+
+```cpp
+// Minimum level is Warn
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Warn> logger;
+
+logger.Trace("...");    // Compiles to no-op
+logger.Debug("...");    // Compiles to no-op
+logger.Info("...");     // Compiles to no-op
+logger.Warn("...");     // Logged normally
+logger.Error("...");    // Logged normally
+logger.Critical("..."); // Logged normally
+```
+
+### WFC Functionality
+
+WFC (Wait For Completion) functionality can be enabled or disabled at compile time:
+
+```cpp
+// WFC enabled
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, true> logger;
+logger.InfoWFC("This will wait for completion");
+
+// WFC disabled (default)
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, false> logger2;
+logger2.InfoWFC("This degrades to normal Info()");  // Degrades to normal log
+```
 
 ## License
 

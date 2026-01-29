@@ -22,8 +22,8 @@
 #define ONEPLOG_TRACE(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Trace)) { \
-            logger->Log(::oneplog::Level::Trace, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Trace(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -38,8 +38,8 @@
 #define ONEPLOG_DEBUG(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Debug)) { \
-            logger->Log(::oneplog::Level::Debug, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Debug(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -54,8 +54,8 @@
 #define ONEPLOG_INFO(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Info)) { \
-            logger->Log(::oneplog::Level::Info, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Info(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -70,8 +70,8 @@
 #define ONEPLOG_WARN(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Warn)) { \
-            logger->Log(::oneplog::Level::Warn, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Warn(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -86,8 +86,8 @@
 #define ONEPLOG_ERROR(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Error)) { \
-            logger->Log(::oneplog::Level::Error, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Error(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -102,8 +102,8 @@
 #define ONEPLOG_CRITICAL(...) \
     do { \
         auto logger = ::oneplog::DefaultLogger(); \
-        if (logger && logger->ShouldLog(::oneplog::Level::Critical)) { \
-            logger->Log(::oneplog::Level::Critical, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
+        if (logger) { \
+            logger->Critical(__VA_ARGS__); \
         } \
     } while (0)
 #else
@@ -114,10 +114,6 @@
 // WFC Logging Macros / WFC 日志宏
 // ==============================================================================
 
-/**
- * @brief Log at TRACE level with Wait For Completion
- * @brief 以 TRACE 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_TRACE
 #define ONEPLOG_TRACE_WFC(...) \
     do { \
@@ -130,10 +126,6 @@
 #define ONEPLOG_TRACE_WFC(...) ((void)0)
 #endif
 
-/**
- * @brief Log at DEBUG level with Wait For Completion
- * @brief 以 DEBUG 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_DEBUG
 #define ONEPLOG_DEBUG_WFC(...) \
     do { \
@@ -146,10 +138,6 @@
 #define ONEPLOG_DEBUG_WFC(...) ((void)0)
 #endif
 
-/**
- * @brief Log at INFO level with Wait For Completion
- * @brief 以 INFO 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_INFO
 #define ONEPLOG_INFO_WFC(...) \
     do { \
@@ -162,10 +150,6 @@
 #define ONEPLOG_INFO_WFC(...) ((void)0)
 #endif
 
-/**
- * @brief Log at WARN level with Wait For Completion
- * @brief 以 WARN 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_WARN
 #define ONEPLOG_WARN_WFC(...) \
     do { \
@@ -178,10 +162,6 @@
 #define ONEPLOG_WARN_WFC(...) ((void)0)
 #endif
 
-/**
- * @brief Log at ERROR level with Wait For Completion
- * @brief 以 ERROR 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_ERROR
 #define ONEPLOG_ERROR_WFC(...) \
     do { \
@@ -194,10 +174,6 @@
 #define ONEPLOG_ERROR_WFC(...) ((void)0)
 #endif
 
-/**
- * @brief Log at CRITICAL level with Wait For Completion
- * @brief 以 CRITICAL 级别记录日志并等待完成
- */
 #ifndef ONEPLOG_DISABLE_CRITICAL
 #define ONEPLOG_CRITICAL_WFC(...) \
     do { \
@@ -214,82 +190,65 @@
 // Conditional Logging Macros / 条件日志宏
 // ==============================================================================
 
-/**
- * @brief Conditional logging macro
- * @brief 条件日志宏
- *
- * @param condition Condition to check / 要检查的条件
- * @param level Log level / 日志级别
- * @param ... Format string and arguments / 格式字符串和参数
- */
-#define ONEPLOG_IF(condition, level, ...) \
-    do { \
-        if (condition) { \
-            auto logger = ::oneplog::DefaultLogger(); \
-            if (logger && logger->ShouldLog(level)) { \
-                logger->Log(level, ONEPLOG_CURRENT_LOCATION, __VA_ARGS__); \
-            } \
-        } \
-    } while (0)
-
-/**
- * @brief Conditional TRACE logging
- * @brief 条件 TRACE 日志
- */
 #define ONEPLOG_TRACE_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Trace, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_TRACE(__VA_ARGS__); } } while (0)
 
-/**
- * @brief Conditional DEBUG logging
- * @brief 条件 DEBUG 日志
- */
 #define ONEPLOG_DEBUG_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Debug, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_DEBUG(__VA_ARGS__); } } while (0)
 
-/**
- * @brief Conditional INFO logging
- * @brief 条件 INFO 日志
- */
 #define ONEPLOG_INFO_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Info, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_INFO(__VA_ARGS__); } } while (0)
 
-/**
- * @brief Conditional WARN logging
- * @brief 条件 WARN 日志
- */
 #define ONEPLOG_WARN_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Warn, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_WARN(__VA_ARGS__); } } while (0)
 
-/**
- * @brief Conditional ERROR logging
- * @brief 条件 ERROR 日志
- */
 #define ONEPLOG_ERROR_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Error, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_ERROR(__VA_ARGS__); } } while (0)
 
-/**
- * @brief Conditional CRITICAL logging
- * @brief 条件 CRITICAL 日志
- */
 #define ONEPLOG_CRITICAL_IF(condition, ...) \
-    ONEPLOG_IF(condition, ::oneplog::Level::Critical, __VA_ARGS__)
+    do { if (condition) { ONEPLOG_CRITICAL(__VA_ARGS__); } } while (0)
 
 // ==============================================================================
-// Compile-time Disable Macros / 编译时禁用宏
+// Compile-time Log Level / 编译时日志级别
 // ==============================================================================
 
-// ONEPLOG_DISABLE_TRACE - Disable TRACE level at compile time
-// ONEPLOG_DISABLE_DEBUG - Disable DEBUG level at compile time
-// ONEPLOG_DISABLE_INFO - Disable INFO level at compile time
-// ONEPLOG_DISABLE_WARN - Disable WARN level at compile time
-// ONEPLOG_DISABLE_ERROR - Disable ERROR level at compile time
-// ONEPLOG_DISABLE_CRITICAL - Disable CRITICAL level at compile time
-
-// ==============================================================================
-// Sync-Only Mode / 仅同步模式
-// ==============================================================================
-
-#ifdef ONEPLOG_SYNC_ONLY
-// When ONEPLOG_SYNC_ONLY is defined, only sync mode code is compiled
-// 当定义 ONEPLOG_SYNC_ONLY 时，仅编译同步模式代码
+#ifndef ONEPLOG_ACTIVE_LEVEL
+#define ONEPLOG_ACTIVE_LEVEL 0
 #endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 0
+#ifndef ONEPLOG_DISABLE_TRACE
+#define ONEPLOG_DISABLE_TRACE
+#endif
+#endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 1
+#ifndef ONEPLOG_DISABLE_DEBUG
+#define ONEPLOG_DISABLE_DEBUG
+#endif
+#endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 2
+#ifndef ONEPLOG_DISABLE_INFO
+#define ONEPLOG_DISABLE_INFO
+#endif
+#endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 3
+#ifndef ONEPLOG_DISABLE_WARN
+#define ONEPLOG_DISABLE_WARN
+#endif
+#endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 4
+#ifndef ONEPLOG_DISABLE_ERROR
+#define ONEPLOG_DISABLE_ERROR
+#endif
+#endif
+
+#if ONEPLOG_ACTIVE_LEVEL > 5
+#ifndef ONEPLOG_DISABLE_CRITICAL
+#define ONEPLOG_DISABLE_CRITICAL
+#endif
+#endif
+

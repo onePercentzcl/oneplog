@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #if defined(__cpp_lib_hardware_interference_size) && __cpp_lib_hardware_interference_size >= 201703L
@@ -261,8 +262,11 @@ struct alignas(kCacheLineSize) RingBufferHeader {
  * The main difference is storage location (heap vs shared memory).
  *
  * @tparam T The element type to store / 要存储的元素类型
+ * @tparam EnableWFC Enable WFC (Wait For Completion) support / 启用 WFC 支持
+ *                   When false, WFC checks are completely eliminated at compile time.
+ *                   当为 false 时，WFC 检查在编译时完全消除。
  */
-template<typename T>
+template<typename T, bool EnableWFC = true>
 class RingBufferBase {
 public:
     static constexpr int64_t kInvalidSlot = -1;
@@ -317,11 +321,13 @@ public:
             size_t tail = m_header->tail.load(std::memory_order_acquire);
             
             if (head - tail >= capacity) {
-                // WFC logs NEVER get dropped
-                if (isWFC) {
-                    spinCount = SpinWait(spinCount);
-                    head = m_header->head.load(std::memory_order_relaxed);
-                    continue;
+                // WFC logs NEVER get dropped (only when EnableWFC is true)
+                if constexpr (EnableWFC) {
+                    if (isWFC) {
+                        spinCount = SpinWait(spinCount);
+                        head = m_header->head.load(std::memory_order_relaxed);
+                        continue;
+                    }
                 }
                 
                 switch (m_header->policy) {
@@ -331,10 +337,13 @@ public:
                     
                     case QueueFullPolicy::DropOldest: {
                         size_t oldestSlot = tail % capacity;
-                        if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
-                            spinCount = SpinWait(spinCount);
-                            head = m_header->head.load(std::memory_order_relaxed);
-                            continue;
+                        // WFC check only when EnableWFC is true
+                        if constexpr (EnableWFC) {
+                            if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
+                                spinCount = SpinWait(spinCount);
+                                head = m_header->head.load(std::memory_order_relaxed);
+                                continue;
+                            }
                         }
                         if (DropOldestEntry()) { continue; }
                         spinCount = SpinWait(spinCount);
@@ -399,7 +408,9 @@ public:
 
     /**
      * @brief Push with WFC - NEVER dropped, blocks if queue is full
+     * @note Only available when EnableWFC is true
      */
+    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
     int64_t TryPushWFC(T&& item) noexcept {
         int64_t slot = AcquireSlot(true);
         if (slot == kInvalidSlot) { return kInvalidSlot; }
@@ -411,6 +422,7 @@ public:
         return slot;
     }
 
+    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
     int64_t TryPushWFC(const T& item) noexcept {
         int64_t slot = AcquireSlot(true);
         if (slot == kInvalidSlot) { return kInvalidSlot; }
@@ -437,10 +449,16 @@ public:
         if (!m_slotStatus[slot].TryStartRead()) { return false; }
         
         item = std::move(m_buffer[slot]);
-        bool hasWFC = m_slotStatus[slot].IsWFCEnabled();
-        m_slotStatus[slot].CompleteRead();
         
-        if (hasWFC) { m_slotStatus[slot].CompleteWFC(); }
+        // WFC check is completely eliminated at compile time when EnableWFC is false
+        // 当 EnableWFC 为 false 时，WFC 检查在编译时完全消除
+        if constexpr (EnableWFC) {
+            bool hasWFC = m_slotStatus[slot].IsWFCEnabled();
+            m_slotStatus[slot].CompleteRead();
+            if (hasWFC) { m_slotStatus[slot].CompleteWFC(); }
+        } else {
+            m_slotStatus[slot].CompleteRead();
+        }
         
         // Use release to ensure item read is complete before tail update
         m_header->tail.store(tail + 1, std::memory_order_release);
@@ -462,8 +480,10 @@ public:
 
     // =========================================================================
     // WFC Support / WFC 支持
+    // Only available when EnableWFC is true / 仅在 EnableWFC 为 true 时可用
     // =========================================================================
 
+    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
     void MarkWFCComplete(int64_t slot) noexcept {
         if (m_header && m_slotStatus && slot >= 0 && 
             static_cast<size_t>(slot) < m_header->capacity) {
@@ -471,6 +491,7 @@ public:
         }
     }
 
+    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
     bool WaitForCompletion(int64_t slot, std::chrono::milliseconds timeout) noexcept {
         if (!m_header || !m_slotStatus || slot < 0 || 
             static_cast<size_t>(slot) >= m_header->capacity) { return false; }
@@ -486,6 +507,7 @@ public:
         return m_slotStatus[idx].IsWFCCompleted();
     }
 
+    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
     WFCState GetWFCState(int64_t slot) const noexcept {
         if (!m_header || !m_slotStatus || slot < 0 || 
             static_cast<size_t>(slot) >= m_header->capacity) { return kWFCNone; }
@@ -642,7 +664,10 @@ protected:
         
         size_t slot = tail % m_header->capacity;
         
-        if (m_slotStatus[slot].IsWFCEnabled()) { return false; }
+        // WFC check only when EnableWFC is true
+        if constexpr (EnableWFC) {
+            if (m_slotStatus[slot].IsWFCEnabled()) { return false; }
+        }
         if (!m_slotStatus[slot].TryStartRead()) { return false; }
         
         m_slotStatus[slot].CompleteRead();

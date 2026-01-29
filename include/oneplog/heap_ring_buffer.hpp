@@ -24,11 +24,12 @@ namespace oneplog {
  * 用于单进程异步日志（Source → HeapRingBuffer → Writer）。
  *
  * @tparam T The element type to store / 要存储的元素类型
+ * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
  */
-template<typename T>
-class HeapRingBuffer : public RingBufferBase<T> {
+template<typename T, bool EnableWFC = true>
+class HeapRingBuffer : public RingBufferBase<T, EnableWFC> {
 public:
-    using Base = RingBufferBase<T>;
+    using Base = RingBufferBase<T, EnableWFC>;
 
     /**
      * @brief Construct a heap ring buffer

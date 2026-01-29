@@ -125,11 +125,11 @@ class NameManagerTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Ensure clean state / 确保干净状态
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
 
     void TearDown() override {
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
 };
 
@@ -138,14 +138,14 @@ protected:
  * @brief 测试初始化和关闭
  */
 TEST_F(NameManagerTest, InitializeAndShutdown) {
-    EXPECT_FALSE(NameManager::IsInitialized());
+    EXPECT_FALSE(NameManager<>::IsInitialized());
     
-    NameManager::Initialize(Mode::Async);
-    EXPECT_TRUE(NameManager::IsInitialized());
-    EXPECT_EQ(NameManager::GetMode(), Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
+    EXPECT_TRUE(NameManager<>::IsInitialized());
+    EXPECT_EQ(NameManager<>::GetMode(), Mode::Async);
     
-    NameManager::Shutdown();
-    EXPECT_FALSE(NameManager::IsInitialized());
+    NameManager<>::Shutdown();
+    EXPECT_FALSE(NameManager<>::IsInitialized());
 }
 
 /**
@@ -153,10 +153,10 @@ TEST_F(NameManagerTest, InitializeAndShutdown) {
  * @brief 测试重复初始化（应该是幂等的）
  */
 TEST_F(NameManagerTest, DoubleInitialization) {
-    NameManager::Initialize(Mode::Async);
-    NameManager::Initialize(Mode::Sync);  // Should be ignored / 应该被忽略
+    NameManager<>::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Sync);  // Should be ignored / 应该被忽略
     
-    EXPECT_EQ(NameManager::GetMode(), Mode::Async);  // First mode should persist / 第一个模式应保持
+    EXPECT_EQ(NameManager<>::GetMode(), Mode::Async);  // First mode should persist / 第一个模式应保持
 }
 
 /**
@@ -164,10 +164,10 @@ TEST_F(NameManagerTest, DoubleInitialization) {
  * @brief 测试 Sync 模式进程名
  */
 TEST_F(NameManagerTest, SyncModeProcessName) {
-    NameManager::Initialize(Mode::Sync);
+    NameManager<>::Initialize(Mode::Sync);
     
-    NameManager::SetProcessName("test_process");
-    EXPECT_EQ(NameManager::GetProcessName(), "test_process");
+    NameManager<>::SetProcessName("test_process");
+    EXPECT_EQ(NameManager<>::GetProcessName(), "test_process");
 }
 
 /**
@@ -175,10 +175,10 @@ TEST_F(NameManagerTest, SyncModeProcessName) {
  * @brief 测试 Sync 模式模块名
  */
 TEST_F(NameManagerTest, SyncModeModuleName) {
-    NameManager::Initialize(Mode::Sync);
+    NameManager<>::Initialize(Mode::Sync);
     
-    NameManager::SetModuleName("test_module");
-    EXPECT_EQ(NameManager::GetModuleName(), "test_module");
+    NameManager<>::SetModuleName("test_module");
+    EXPECT_EQ(NameManager<>::GetModuleName(), "test_module");
 }
 
 /**
@@ -186,10 +186,10 @@ TEST_F(NameManagerTest, SyncModeModuleName) {
  * @brief 测试 Async 模式进程名（全局）
  */
 TEST_F(NameManagerTest, AsyncModeProcessName) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
-    NameManager::SetProcessName("async_process");
-    EXPECT_EQ(NameManager::GetProcessName(), "async_process");
+    NameManager<>::SetProcessName("async_process");
+    EXPECT_EQ(NameManager<>::GetProcessName(), "async_process");
 }
 
 /**
@@ -197,10 +197,10 @@ TEST_F(NameManagerTest, AsyncModeProcessName) {
  * @brief 测试 Async 模式模块名（使用堆表）
  */
 TEST_F(NameManagerTest, AsyncModeModuleName) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
-    NameManager::SetModuleName("async_module");
-    EXPECT_EQ(NameManager::GetModuleName(), "async_module");
+    NameManager<>::SetModuleName("async_module");
+    EXPECT_EQ(NameManager<>::GetModuleName(), "async_module");
 }
 
 /**
@@ -208,13 +208,13 @@ TEST_F(NameManagerTest, AsyncModeModuleName) {
  * @brief 测试默认值
  */
 TEST_F(NameManagerTest, DefaultValues) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
     // Default process name should be "main" / 默认进程名应为 "main"
-    EXPECT_EQ(NameManager::GetProcessName(), "main");
+    EXPECT_EQ(NameManager<>::GetProcessName(), "main");
     
     // Default module name should be "main" / 默认模块名应为 "main"
-    EXPECT_EQ(NameManager::GetModuleName(), "main");
+    EXPECT_EQ(NameManager<>::GetModuleName(), "main");
 }
 
 /**
@@ -222,12 +222,12 @@ TEST_F(NameManagerTest, DefaultValues) {
  * @brief 测试名称截断
  */
 TEST_F(NameManagerTest, NameTruncation) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
     std::string longName(50, 'a');  // 50 character name / 50 字符名称
-    NameManager::SetProcessName(longName);
+    NameManager<>::SetProcessName(longName);
     
-    std::string result = NameManager::GetProcessName();
+    std::string result = NameManager<>::GetProcessName();
     EXPECT_EQ(result.length(), 31);  // Should be truncated to 31 / 应截断到 31
 }
 
@@ -236,11 +236,11 @@ TEST_F(NameManagerTest, NameTruncation) {
  * @brief 测试 GetRegisteredProcessId 和 GetRegisteredThreadId
  */
 TEST_F(NameManagerTest, RegisteredIds) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
     // In Async mode, these should return 0 / 在 Async 模式下，这些应返回 0
-    EXPECT_EQ(NameManager::GetRegisteredProcessId(), 0);
-    EXPECT_EQ(NameManager::GetRegisteredThreadId(), 0);
+    EXPECT_EQ(NameManager<>::GetRegisteredProcessId(), 0);
+    EXPECT_EQ(NameManager<>::GetRegisteredThreadId(), 0);
 }
 
 /**
@@ -248,7 +248,7 @@ TEST_F(NameManagerTest, RegisteredIds) {
  * @brief 测试 Async 模式多线程模块名
  */
 TEST_F(NameManagerTest, AsyncModeMultiThread) {
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Initialize(Mode::Async);
     
     std::atomic<bool> thread1Done{false};
     std::atomic<bool> thread2Done{false};
@@ -256,14 +256,14 @@ TEST_F(NameManagerTest, AsyncModeMultiThread) {
     std::string thread2Name;
     
     std::thread t1([&]() {
-        NameManager::SetModuleName("thread1_module");
-        thread1Name = NameManager::GetModuleName();
+        NameManager<>::SetModuleName("thread1_module");
+        thread1Name = NameManager<>::GetModuleName();
         thread1Done = true;
     });
     
     std::thread t2([&]() {
-        NameManager::SetModuleName("thread2_module");
-        thread2Name = NameManager::GetModuleName();
+        NameManager<>::SetModuleName("thread2_module");
+        thread2Name = NameManager<>::GetModuleName();
         thread2Done = true;
     });
     
@@ -281,20 +281,20 @@ TEST_F(NameManagerTest, AsyncModeMultiThread) {
  * @brief 测试 Sync 模式线程隔离
  */
 TEST_F(NameManagerTest, SyncModeThreadIsolation) {
-    NameManager::Initialize(Mode::Sync);
+    NameManager<>::Initialize(Mode::Sync);
     
     // Set module name in main thread / 在主线程设置模块名
-    NameManager::SetModuleName("main_module");
+    NameManager<>::SetModuleName("main_module");
     
     std::string childThreadName;
     std::thread t([&]() {
         // Child thread should have default name / 子线程应有默认名称
-        childThreadName = NameManager::GetModuleName();
+        childThreadName = NameManager<>::GetModuleName();
     });
     t.join();
     
     // Main thread name should be unchanged / 主线程名称应不变
-    EXPECT_EQ(NameManager::GetModuleName(), "main_module");
+    EXPECT_EQ(NameManager<>::GetModuleName(), "main_module");
     // Child thread should have default "main" / 子线程应有默认 "main"
     EXPECT_EQ(childThreadName, "main");
 }
@@ -305,8 +305,8 @@ TEST_F(NameManagerTest, SyncModeThreadIsolation) {
  */
 TEST_F(NameManagerTest, OperationsBeforeInit) {
     // Should not crash, use default behavior / 不应崩溃，使用默认行为
-    NameManager::SetProcessName("test");
-    NameManager::SetModuleName("test");
+    NameManager<>::SetProcessName("test");
+    NameManager<>::SetModuleName("test");
     
     // GetProcessName/GetModuleName should return something / 应返回某些值
     // (behavior depends on default state)
@@ -319,11 +319,11 @@ TEST_F(NameManagerTest, OperationsBeforeInit) {
 class ThreadWithModuleNameTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
 
     void TearDown() override {
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
 };
 
@@ -332,12 +332,12 @@ protected:
  * @brief 测试 Sync 模式下的模块名继承
  */
 TEST_F(ThreadWithModuleNameTest, SyncModeInheritance) {
-    NameManager::Initialize(Mode::Sync);
-    NameManager::SetModuleName("parent_module");
+    NameManager<>::Initialize(Mode::Sync);
+    NameManager<>::SetModuleName("parent_module");
     
     std::string childModuleName;
-    auto thread = ThreadWithModuleName::Create([&]() {
-        childModuleName = NameManager::GetModuleName();
+    auto thread = ThreadWithModuleName<>::Create([&]() {
+        childModuleName = NameManager<>::GetModuleName();
     });
     thread.join();
     
@@ -349,12 +349,12 @@ TEST_F(ThreadWithModuleNameTest, SyncModeInheritance) {
  * @brief 测试 Async 模式下的模块名继承
  */
 TEST_F(ThreadWithModuleNameTest, AsyncModeInheritance) {
-    NameManager::Initialize(Mode::Async);
-    NameManager::SetModuleName("async_parent");
+    NameManager<>::Initialize(Mode::Async);
+    NameManager<>::SetModuleName("async_parent");
     
     std::string childModuleName;
-    auto thread = ThreadWithModuleName::Create([&]() {
-        childModuleName = NameManager::GetModuleName();
+    auto thread = ThreadWithModuleName<>::Create([&]() {
+        childModuleName = NameManager<>::GetModuleName();
     });
     thread.join();
     
@@ -366,12 +366,12 @@ TEST_F(ThreadWithModuleNameTest, AsyncModeInheritance) {
  * @brief 测试 CreateWithName 设置特定模块名
  */
 TEST_F(ThreadWithModuleNameTest, CreateWithSpecificName) {
-    NameManager::Initialize(Mode::Async);
-    NameManager::SetModuleName("parent");
+    NameManager<>::Initialize(Mode::Async);
+    NameManager<>::SetModuleName("parent");
     
     std::string childModuleName;
-    auto thread = ThreadWithModuleName::CreateWithName("specific_child", [&]() {
-        childModuleName = NameManager::GetModuleName();
+    auto thread = ThreadWithModuleName<>::CreateWithName("specific_child", [&]() {
+        childModuleName = NameManager<>::GetModuleName();
     });
     thread.join();
     
@@ -383,17 +383,17 @@ TEST_F(ThreadWithModuleNameTest, CreateWithSpecificName) {
  * @brief 测试嵌套线程继承
  */
 TEST_F(ThreadWithModuleNameTest, NestedInheritance) {
-    NameManager::Initialize(Mode::Sync);
-    NameManager::SetModuleName("grandparent");
+    NameManager<>::Initialize(Mode::Sync);
+    NameManager<>::SetModuleName("grandparent");
     
     std::string parentName;
     std::string childName;
     
-    auto parentThread = ThreadWithModuleName::Create([&]() {
-        parentName = NameManager::GetModuleName();
+    auto parentThread = ThreadWithModuleName<>::Create([&]() {
+        parentName = NameManager<>::GetModuleName();
         
-        auto childThread = ThreadWithModuleName::Create([&]() {
-            childName = NameManager::GetModuleName();
+        auto childThread = ThreadWithModuleName<>::Create([&]() {
+            childName = NameManager<>::GetModuleName();
         });
         childThread.join();
     });
@@ -408,13 +408,13 @@ TEST_F(ThreadWithModuleNameTest, NestedInheritance) {
  * @brief 测试显式 SetModuleName 覆盖继承
  */
 TEST_F(ThreadWithModuleNameTest, ExplicitOverridesInheritance) {
-    NameManager::Initialize(Mode::Sync);
-    NameManager::SetModuleName("parent");
+    NameManager<>::Initialize(Mode::Sync);
+    NameManager<>::SetModuleName("parent");
     
     std::string childModuleName;
-    auto thread = ThreadWithModuleName::Create([&]() {
-        NameManager::SetModuleName("explicit_child");
-        childModuleName = NameManager::GetModuleName();
+    auto thread = ThreadWithModuleName<>::Create([&]() {
+        NameManager<>::SetModuleName("explicit_child");
+        childModuleName = NameManager<>::GetModuleName();
     });
     thread.join();
     
@@ -426,14 +426,14 @@ TEST_F(ThreadWithModuleNameTest, ExplicitOverridesInheritance) {
  * @brief 测试带参数的线程
  */
 TEST_F(ThreadWithModuleNameTest, ThreadWithArguments) {
-    NameManager::Initialize(Mode::Async);
-    NameManager::SetModuleName("worker");
+    NameManager<>::Initialize(Mode::Async);
+    NameManager<>::SetModuleName("worker");
     
     int result = 0;
     std::string moduleName;
     
-    auto thread = ThreadWithModuleName::Create([&](int a, int b) {
-        moduleName = NameManager::GetModuleName();
+    auto thread = ThreadWithModuleName<>::Create([&](int a, int b) {
+        moduleName = NameManager<>::GetModuleName();
         result = a + b;
     }, 10, 20);
     thread.join();
@@ -468,11 +468,11 @@ RC_GTEST_PROP(NameManagerPropertyTest, NameLengthInvariant, ()) {
     
     // Test process name truncation / 测试进程名截断
     {
-        NameManager::Shutdown();
-        NameManager::Initialize(Mode::Async);
+        NameManager<>::Shutdown();
+        NameManager<>::Initialize(Mode::Async);
         
-        NameManager::SetProcessName(name);
-        std::string result = NameManager::GetProcessName();
+        NameManager<>::SetProcessName(name);
+        std::string result = NameManager<>::GetProcessName();
         
         // Result should never exceed 31 characters / 结果不应超过 31 字符
         RC_ASSERT(result.length() <= 31);
@@ -487,16 +487,16 @@ RC_GTEST_PROP(NameManagerPropertyTest, NameLengthInvariant, ()) {
             RC_ASSERT(result == name.substr(0, 31));
         }
         
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
     
     // Test module name truncation / 测试模块名截断
     {
-        NameManager::Shutdown();
-        NameManager::Initialize(Mode::Async);
+        NameManager<>::Shutdown();
+        NameManager<>::Initialize(Mode::Async);
         
-        NameManager::SetModuleName(name);
-        std::string result = NameManager::GetModuleName();
+        NameManager<>::SetModuleName(name);
+        std::string result = NameManager<>::GetModuleName();
         
         // Result should never exceed 31 characters / 结果不应超过 31 字符
         RC_ASSERT(result.length() <= 31);
@@ -511,7 +511,7 @@ RC_GTEST_PROP(NameManagerPropertyTest, NameLengthInvariant, ()) {
             RC_ASSERT(result == name.substr(0, 31));
         }
         
-        NameManager::Shutdown();
+        NameManager<>::Shutdown();
     }
 }
 
@@ -584,8 +584,8 @@ RC_GTEST_PROP(NameManagerPropertyTest, ConcurrentAccessSafety, ()) {
     // Generate number of threads (2-16) / 生成线程数（2-16）
     const auto numThreads = *rc::gen::inRange<size_t>(2, 17);
     
-    NameManager::Shutdown();
-    NameManager::Initialize(Mode::Async);
+    NameManager<>::Shutdown();
+    NameManager<>::Initialize(Mode::Async);
     
     std::vector<std::thread> threads;
     std::vector<std::atomic<bool>> successes(numThreads);
@@ -603,14 +603,14 @@ RC_GTEST_PROP(NameManagerPropertyTest, ConcurrentAccessSafety, ()) {
     for (size_t i = 0; i < numThreads; ++i) {
         threads.emplace_back([i, &successes, &expectedNames, &retrievedNames]() {
             // Set module name / 设置模块名
-            NameManager::SetModuleName(expectedNames[i]);
+            NameManager<>::SetModuleName(expectedNames[i]);
             
             // Small delay to increase chance of concurrent access
             // 小延迟以增加并发访问的机会
             std::this_thread::yield();
             
             // Get module name / 获取模块名
-            retrievedNames[i] = NameManager::GetModuleName();
+            retrievedNames[i] = NameManager<>::GetModuleName();
             
             // Verify the name matches what we set / 验证名称与设置的匹配
             successes[i].store(retrievedNames[i] == expectedNames[i]);
@@ -627,7 +627,7 @@ RC_GTEST_PROP(NameManagerPropertyTest, ConcurrentAccessSafety, ()) {
         RC_ASSERT(successes[i].load());
     }
     
-    NameManager::Shutdown();
+    NameManager<>::Shutdown();
 }
 
 #endif  // ONEPLOG_HAS_RAPIDCHECK

@@ -205,11 +205,8 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
     /**
      * @brief Register a process name and get its ID
      * @brief 注册进程名称并获取其 ID
-     * @param name Process name / 进程名称
-     * @return Process ID, or 0 if table is full / 进程 ID，表满时返回 0
      */
     uint32_t RegisterProcess(const char* name) noexcept {
-        // Check if already registered / 检查是否已注册
         uint32_t count = processCount.load(std::memory_order_acquire);
         for (uint32_t i = 0; i < count && i < kMaxProcesses; ++i) {
             if (std::strcmp(processes[i].name, name) == 0) {
@@ -217,14 +214,13 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
             }
         }
         
-        // Register new process / 注册新进程
         uint32_t newIndex = processCount.fetch_add(1, std::memory_order_acq_rel);
         if (newIndex >= kMaxProcesses) {
             processCount.fetch_sub(1, std::memory_order_relaxed);
-            return 0;  // Table full / 表已满
+            return 0;
         }
         
-        uint32_t newId = newIndex + 1;  // ID starts from 1 / ID 从 1 开始
+        uint32_t newId = newIndex + 1;
         processes[newIndex].Set(newId, name);
         return newId;
     }
@@ -232,11 +228,8 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
     /**
      * @brief Register a thread name and get its ID
      * @brief 注册线程名称并获取其 ID
-     * @param name Thread name / 线程名称
-     * @return Thread ID, or 0 if table is full / 线程 ID，表满时返回 0
      */
     uint32_t RegisterThread(const char* name) noexcept {
-        // Check if already registered / 检查是否已注册
         uint32_t count = threadCount.load(std::memory_order_acquire);
         for (uint32_t i = 0; i < count && i < kMaxThreads; ++i) {
             if (std::strcmp(threads[i].name, name) == 0) {
@@ -244,22 +237,17 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
             }
         }
         
-        // Register new thread / 注册新线程
         uint32_t newIndex = threadCount.fetch_add(1, std::memory_order_acq_rel);
         if (newIndex >= kMaxThreads) {
             threadCount.fetch_sub(1, std::memory_order_relaxed);
-            return 0;  // Table full / 表已满
+            return 0;
         }
         
-        uint32_t newId = newIndex + 1;  // ID starts from 1 / ID 从 1 开始
+        uint32_t newId = newIndex + 1;
         threads[newIndex].Set(newId, name);
         return newId;
     }
     
-    /**
-     * @brief Get process name by ID
-     * @brief 通过 ID 获取进程名称
-     */
     const char* GetProcessName(uint32_t id) const noexcept {
         if (id == 0 || id > kMaxProcesses) { return nullptr; }
         uint32_t index = id - 1;
@@ -267,10 +255,6 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
         return processes[index].name;
     }
     
-    /**
-     * @brief Get thread name by ID
-     * @brief 通过 ID 获取线程名称
-     */
     const char* GetThreadName(uint32_t id) const noexcept {
         if (id == 0 || id > kMaxThreads) { return nullptr; }
         uint32_t index = id - 1;
@@ -296,6 +280,8 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
  * @brief Shared memory manager for multi-process logging
  * @brief 多进程日志的共享内存管理器
  *
+ * @tparam EnableWFC Enable WFC support for SharedRingBuffer / 启用 SharedRingBuffer 的 WFC 支持
+ *
  * Memory Layout / 内存布局:
  * +---------------------------+
  * | SharedMemoryMetadata      |  (cache-line aligned / 缓存行对齐)
@@ -307,16 +293,12 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
  * | SharedRingBuffer memory   |  (cache-line aligned / 缓存行对齐)
  * +---------------------------+
  */
+template<bool EnableWFC = true>
 class SharedMemory {
 public:
     /**
      * @brief Create a new shared memory region
      * @brief 创建新的共享内存区域
-     *
-     * @param name Shared memory name (e.g., "/oneplog_shm") / 共享内存名称
-     * @param ringBufferCapacity Capacity of the ring buffer / 环形队列容量
-     * @param policy Queue full policy / 队列满策略
-     * @return Unique pointer to SharedMemory, or nullptr on failure
      */
     static std::unique_ptr<SharedMemory> Create(
         const std::string& name,
@@ -327,13 +309,10 @@ public:
             return nullptr;
         }
         
-        // Calculate required size / 计算所需大小
         size_t totalSize = CalculateRequiredSize(ringBufferCapacity);
         
-        // Create shared memory / 创建共享内存
         int fd = shm_open(name.c_str(), O_CREAT | O_RDWR | O_EXCL, 0666);
         if (fd < 0) {
-            // Try to unlink and recreate if exists / 如果存在则尝试删除并重新创建
             shm_unlink(name.c_str());
             fd = shm_open(name.c_str(), O_CREAT | O_RDWR | O_EXCL, 0666);
             if (fd < 0) {
@@ -341,14 +320,12 @@ public:
             }
         }
         
-        // Set size / 设置大小
         if (ftruncate(fd, static_cast<off_t>(totalSize)) < 0) {
             close(fd);
             shm_unlink(name.c_str());
             return nullptr;
         }
         
-        // Map memory / 映射内存
         void* memory = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (memory == MAP_FAILED) {
             close(fd);
@@ -356,41 +333,34 @@ public:
             return nullptr;
         }
         
-        // Zero initialize / 零初始化
         std::memset(memory, 0, totalSize);
         
-        // Create SharedMemory object / 创建 SharedMemory 对象
         auto shm = std::unique_ptr<SharedMemory>(new SharedMemory(name, true));
         shm->m_fd = fd;
         shm->m_memory = memory;
         shm->m_size = totalSize;
         
-        // Calculate offsets / 计算偏移
         size_t metadataOffset = 0;
         size_t configOffset = AlignUp(sizeof(SharedMemoryMetadata), kCacheLineSize);
         size_t nameTableOffset = configOffset + AlignUp(sizeof(SharedLoggerConfig), kCacheLineSize);
         size_t ringBufferOffset = nameTableOffset + AlignUp(sizeof(ProcessThreadNameTable), kCacheLineSize);
         
-        // Initialize metadata / 初始化元数据
         shm->m_metadata = reinterpret_cast<SharedMemoryMetadata*>(
             static_cast<uint8_t*>(memory) + metadataOffset);
         shm->m_metadata->Init(totalSize, configOffset, nameTableOffset, 
                               ringBufferOffset, ringBufferCapacity, policy);
         
-        // Initialize config / 初始化配置
         shm->m_config = reinterpret_cast<SharedLoggerConfig*>(
             static_cast<uint8_t*>(memory) + configOffset);
         shm->m_config->Init();
         
-        // Initialize name table / 初始化名称表
         shm->m_nameTable = reinterpret_cast<ProcessThreadNameTable*>(
             static_cast<uint8_t*>(memory) + nameTableOffset);
         shm->m_nameTable->Init();
         
-        // Create ring buffer / 创建环形队列
         void* ringBufferMemory = static_cast<uint8_t*>(memory) + ringBufferOffset;
-        size_t ringBufferSize = SharedRingBuffer<LogEntry>::CalculateRequiredSize(ringBufferCapacity);
-        shm->m_ringBuffer = SharedRingBuffer<LogEntry>::Create(
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(ringBufferCapacity);
+        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC>::Create(
             ringBufferMemory, ringBufferSize, ringBufferCapacity, policy);
         
         if (!shm->m_ringBuffer) {
@@ -403,22 +373,17 @@ public:
     /**
      * @brief Connect to an existing shared memory region
      * @brief 连接到已存在的共享内存区域
-     *
-     * @param name Shared memory name / 共享内存名称
-     * @return Unique pointer to SharedMemory, or nullptr on failure
      */
     static std::unique_ptr<SharedMemory> Connect(const std::string& name) {
         if (name.empty()) {
             return nullptr;
         }
         
-        // Open existing shared memory / 打开已存在的共享内存
         int fd = shm_open(name.c_str(), O_RDWR, 0666);
         if (fd < 0) {
             return nullptr;
         }
         
-        // Get size from file / 从文件获取大小
         struct stat st;
         if (fstat(fd, &st) < 0) {
             close(fd);
@@ -426,14 +391,12 @@ public:
         }
         size_t totalSize = static_cast<size_t>(st.st_size);
         
-        // Map memory / 映射内存
         void* memory = mmap(nullptr, totalSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (memory == MAP_FAILED) {
             close(fd);
             return nullptr;
         }
         
-        // Validate metadata / 验证元数据
         auto* metadata = reinterpret_cast<SharedMemoryMetadata*>(memory);
         if (!metadata->IsValid()) {
             munmap(memory, totalSize);
@@ -441,24 +404,21 @@ public:
             return nullptr;
         }
         
-        // Create SharedMemory object / 创建 SharedMemory 对象
         auto shm = std::unique_ptr<SharedMemory>(new SharedMemory(name, false));
         shm->m_fd = fd;
         shm->m_memory = memory;
         shm->m_size = totalSize;
         shm->m_metadata = metadata;
         
-        // Get component pointers / 获取组件指针
         shm->m_config = reinterpret_cast<SharedLoggerConfig*>(
             static_cast<uint8_t*>(memory) + metadata->configOffset);
         shm->m_nameTable = reinterpret_cast<ProcessThreadNameTable*>(
             static_cast<uint8_t*>(memory) + metadata->nameTableOffset);
         
-        // Connect to ring buffer / 连接到环形队列
         void* ringBufferMemory = static_cast<uint8_t*>(memory) + metadata->ringBufferOffset;
-        size_t ringBufferSize = SharedRingBuffer<LogEntry>::CalculateRequiredSize(
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(
             metadata->ringBufferCapacity);
-        shm->m_ringBuffer = SharedRingBuffer<LogEntry>::Connect(ringBufferMemory, ringBufferSize);
+        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC>::Connect(ringBufferMemory, ringBufferSize);
         
         if (!shm->m_ringBuffer) {
             munmap(memory, totalSize);
@@ -477,38 +437,33 @@ public:
         size_t metadataSize = AlignUp(sizeof(SharedMemoryMetadata), kCacheLineSize);
         size_t configSize = AlignUp(sizeof(SharedLoggerConfig), kCacheLineSize);
         size_t nameTableSize = AlignUp(sizeof(ProcessThreadNameTable), kCacheLineSize);
-        size_t ringBufferSize = SharedRingBuffer<LogEntry>::CalculateRequiredSize(ringBufferCapacity);
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(ringBufferCapacity);
         
         return metadataSize + configSize + nameTableSize + ringBufferSize;
     }
     
     ~SharedMemory() {
-        // Delete ring buffer wrapper (not the memory itself)
-        // 删除环形队列包装器（不是内存本身）
         if (m_ringBuffer) {
             delete m_ringBuffer;
             m_ringBuffer = nullptr;
         }
         
-        // Unmap shared memory / 取消映射共享内存
         if (m_memory && m_size > 0) {
             munmap(m_memory, m_size);
             m_memory = nullptr;
         }
         
-        // Close file descriptor / 关闭文件描述符
         if (m_fd >= 0) {
             close(m_fd);
             m_fd = -1;
         }
         
-        // Unlink shared memory if owner / 如果是所有者则删除共享内存
         if (m_isOwner && !m_name.empty()) {
             shm_unlink(m_name.c_str());
         }
     }
     
-    // Non-copyable, non-movable / 不可复制，不可移动
+    // Non-copyable, non-movable
     SharedMemory(const SharedMemory&) = delete;
     SharedMemory& operator=(const SharedMemory&) = delete;
     SharedMemory(SharedMemory&&) = delete;
@@ -524,41 +479,25 @@ public:
     ProcessThreadNameTable* GetNameTable() noexcept { return m_nameTable; }
     const ProcessThreadNameTable* GetNameTable() const noexcept { return m_nameTable; }
     
-    SharedRingBuffer<LogEntry>* GetRingBuffer() noexcept { return m_ringBuffer; }
-    const SharedRingBuffer<LogEntry>* GetRingBuffer() const noexcept { return m_ringBuffer; }
+    SharedRingBuffer<LogEntry, EnableWFC>* GetRingBuffer() noexcept { return m_ringBuffer; }
+    const SharedRingBuffer<LogEntry, EnableWFC>* GetRingBuffer() const noexcept { return m_ringBuffer; }
     
     // =========================================================================
     // Name Registration / 名称注册
     // =========================================================================
     
-    /**
-     * @brief Register process name
-     * @brief 注册进程名称
-     */
     uint32_t RegisterProcess(const std::string& name) {
         return m_nameTable ? m_nameTable->RegisterProcess(name.c_str()) : 0;
     }
     
-    /**
-     * @brief Register thread name
-     * @brief 注册线程名称
-     */
     uint32_t RegisterThread(const std::string& name) {
         return m_nameTable ? m_nameTable->RegisterThread(name.c_str()) : 0;
     }
     
-    /**
-     * @brief Get process name by ID
-     * @brief 通过 ID 获取进程名称
-     */
     const char* GetProcessName(uint32_t id) const {
         return m_nameTable ? m_nameTable->GetProcessName(id) : nullptr;
     }
     
-    /**
-     * @brief Get thread name by ID
-     * @brief 通过 ID 获取线程名称
-     */
     const char* GetThreadName(uint32_t id) const {
         return m_nameTable ? m_nameTable->GetThreadName(id) : nullptr;
     }
@@ -575,20 +514,12 @@ public:
     // Notification / 通知机制
     // =========================================================================
     
-    /**
-     * @brief Notify consumer that data is available
-     * @brief 通知消费者有数据可用
-     */
     void NotifyConsumer() noexcept {
         if (m_ringBuffer) {
             m_ringBuffer->NotifyConsumer();
         }
     }
     
-    /**
-     * @brief Wait for data to be available
-     * @brief 等待数据可用
-     */
     bool WaitForData(std::chrono::microseconds pollInterval,
                      std::chrono::milliseconds pollTimeout) noexcept {
         if (m_ringBuffer) {
@@ -616,7 +547,7 @@ private:
     SharedMemoryMetadata* m_metadata{nullptr};
     SharedLoggerConfig* m_config{nullptr};
     ProcessThreadNameTable* m_nameTable{nullptr};
-    SharedRingBuffer<LogEntry>* m_ringBuffer{nullptr};
+    SharedRingBuffer<LogEntry, EnableWFC>* m_ringBuffer{nullptr};
 };
 
 }  // namespace oneplog

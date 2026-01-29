@@ -183,7 +183,7 @@ public:
      * @return Resolved process name (padded to 6 chars) / 解析后的进程名（填充到 6 字符）
      */
     static std::string ResolveProcessName(uint32_t processId = 0) {
-        std::string name = NameManager::GetProcessName(processId);
+        std::string name = NameManager<>::GetProcessName(processId);
         return PadOrTruncate(name, 6);
     }
 
@@ -195,7 +195,7 @@ public:
      * @return Resolved module name (padded to 6 chars) / 解析后的模块名（填充到 6 字符）
      */
     static std::string ResolveModuleName(uint32_t threadId = 0) {
-        std::string name = NameManager::GetModuleName(threadId);
+        std::string name = NameManager<>::GetModuleName(threadId);
         return PadOrTruncate(name, 6);
     }
 

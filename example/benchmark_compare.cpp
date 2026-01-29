@@ -169,14 +169,13 @@ public:
 
 Stats BenchOneplogSync(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_sync", oneplog::Mode::Sync);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
-    logger->Init();
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
+    logger.Init();
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
 
     std::vector<int64_t> latencies;
@@ -185,7 +184,7 @@ Stats BenchOneplogSync(const Config& cfg) {
     auto start = Clock::now();
     for (int i = 0; i < cfg.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Message {} value {}", i, 3.14159);
+        logger.Info("Message {} value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
@@ -197,20 +196,18 @@ Stats BenchOneplogSync(const Config& cfg) {
 
 Stats BenchOneplogAsync(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_async", oneplog::Mode::Async);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
     
     oneplog::LoggerConfig logCfg;
-    logCfg.mode = oneplog::Mode::Async;
     logCfg.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logCfg);
+    logger.Init(logCfg);
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
-    logger->Flush();
+    logger.Flush();
 
     std::vector<int64_t> latencies;
     latencies.reserve(cfg.iterations);
@@ -218,14 +215,14 @@ Stats BenchOneplogAsync(const Config& cfg) {
     auto start = Clock::now();
     for (int i = 0; i < cfg.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Message {} value {}", i, 3.14159);
+        logger.Info("Message {} value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalcStats(latencies, totalMs);
@@ -233,20 +230,18 @@ Stats BenchOneplogAsync(const Config& cfg) {
 
 Stats BenchOneplogAsyncMT(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_async_mt", oneplog::Mode::Async);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
     
     oneplog::LoggerConfig logCfg;
-    logCfg.mode = oneplog::Mode::Async;
     logCfg.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logCfg);
+    logger.Init(logCfg);
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
-    logger->Flush();
+    logger.Flush();
 
     int iterPerThread = cfg.iterations / cfg.threads;
     std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
@@ -259,7 +254,7 @@ Stats BenchOneplogAsyncMT(const Config& cfg) {
             while (!go.load()) std::this_thread::yield();
             for (int i = 0; i < iterPerThread; ++i) {
                 auto t1 = Clock::now();
-                logger->Info("Thread {} msg {} val {}", t, i, 3.14159);
+                logger.Info("Thread {} msg {} val {}", t, i, 3.14159);
                 auto t2 = Clock::now();
                 threadLatencies[t].push_back(
                     std::chrono::duration_cast<Duration>(t2 - t1).count());
@@ -272,8 +267,8 @@ Stats BenchOneplogAsyncMT(const Config& cfg) {
     for (auto& th : threads) th.join();
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     std::vector<int64_t> all;
     for (auto& tl : threadLatencies) {
@@ -291,16 +286,15 @@ Stats BenchOneplogAsyncMT(const Config& cfg) {
 Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_sync_file", oneplog::Mode::Sync);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
-    logger->Init();
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
+    logger.Init();
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
-    logger->Flush();
+    logger.Flush();
 
     std::vector<int64_t> latencies;
     latencies.reserve(cfg.iterations);
@@ -308,13 +302,13 @@ Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
     auto start = Clock::now();
     for (int i = 0; i < cfg.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Message {} value {}", i, 3.14159);
+        logger.Info("Message {} value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
+    logger.Flush();
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalcStats(latencies, totalMs);
 }
@@ -322,20 +316,18 @@ Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
 Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_async_file", oneplog::Mode::Async);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
     
     oneplog::LoggerConfig logCfg;
-    logCfg.mode = oneplog::Mode::Async;
     logCfg.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logCfg);
+    logger.Init(logCfg);
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
-    logger->Flush();
+    logger.Flush();
 
     std::vector<int64_t> latencies;
     latencies.reserve(cfg.iterations);
@@ -343,14 +335,14 @@ Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
     auto start = Clock::now();
     for (int i = 0; i < cfg.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Message {} value {}", i, 3.14159);
+        logger.Info("Message {} value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalcStats(latencies, totalMs);
@@ -359,20 +351,18 @@ Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
 Stats BenchOneplogAsyncFileMT(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    auto logger = std::make_shared<oneplog::Logger>("oneplog_async_file_mt", oneplog::Mode::Async);
-    logger->SetSink(sink);
-    logger->SetFormat(std::make_shared<SimpleFormat>());
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(sink);
+    logger.SetFormat(std::make_shared<SimpleFormat>());
     
     oneplog::LoggerConfig logCfg;
-    logCfg.mode = oneplog::Mode::Async;
     logCfg.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logCfg);
+    logger.Init(logCfg);
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger->Info("Warmup {}", i);
+        logger.Info("Warmup {}", i);
     }
-    logger->Flush();
+    logger.Flush();
 
     int iterPerThread = cfg.iterations / cfg.threads;
     std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
@@ -385,7 +375,7 @@ Stats BenchOneplogAsyncFileMT(const Config& cfg, const std::string& filename) {
             while (!go.load()) std::this_thread::yield();
             for (int i = 0; i < iterPerThread; ++i) {
                 auto t1 = Clock::now();
-                logger->Info("Thread {} msg {} val {}", t, i, 3.14159);
+                logger.Info("Thread {} msg {} val {}", t, i, 3.14159);
                 auto t2 = Clock::now();
                 threadLatencies[t].push_back(
                     std::chrono::duration_cast<Duration>(t2 - t1).count());
@@ -398,8 +388,8 @@ Stats BenchOneplogAsyncFileMT(const Config& cfg, const std::string& filename) {
     for (auto& th : threads) th.join();
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     std::vector<int64_t> all;
     for (auto& tl : threadLatencies) {

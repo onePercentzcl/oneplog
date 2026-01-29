@@ -42,7 +42,10 @@ namespace oneplog {
  *
  * Data flow / 数据流:
  * Source → HeapRingBuffer → PipelineThread → SharedRingBuffer → WriterThread
+ *
+ * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
  */
+template<bool EnableWFC = true>
 class PipelineThread {
 public:
     /**
@@ -52,7 +55,7 @@ public:
      * @param heapRingBuffer Reference to the heap ring buffer / 堆环形队列引用
      * @param sharedMemory Reference to the shared memory manager / 共享内存管理器引用
      */
-    PipelineThread(HeapRingBuffer<LogEntry>& heapRingBuffer, SharedMemory& sharedMemory)
+    PipelineThread(HeapRingBuffer<LogEntry, EnableWFC>& heapRingBuffer, SharedMemory<EnableWFC>& sharedMemory)
         : m_heapRingBuffer(heapRingBuffer)
         , m_sharedMemory(sharedMemory)
         , m_running(false)
@@ -247,8 +250,8 @@ private:
 #endif
     }
 
-    HeapRingBuffer<LogEntry>& m_heapRingBuffer;  ///< Heap ring buffer reference / 堆环形队列引用
-    SharedMemory& m_sharedMemory;                 ///< Shared memory reference / 共享内存引用
+    HeapRingBuffer<LogEntry, EnableWFC>& m_heapRingBuffer;  ///< Heap ring buffer reference / 堆环形队列引用
+    SharedMemory<EnableWFC>& m_sharedMemory;              ///< Shared memory reference / 共享内存引用
     std::thread m_thread;                         ///< Worker thread / 工作线程
     std::atomic<bool> m_running;                  ///< Running flag / 运行标志
     std::chrono::microseconds m_pollInterval;     ///< Poll interval / 轮询间隔

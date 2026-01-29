@@ -39,7 +39,10 @@ namespace oneplog {
  * Data flow / 数据流:
  * - Async mode: HeapRingBuffer → WriterThread → Sink
  * - Multi-process mode: SharedRingBuffer → WriterThread → Sink
+ *
+ * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
  */
+template<bool EnableWFC = true>
 class WriterThread {
 public:
     /**
@@ -76,7 +79,7 @@ public:
      *
      * @param buffer Pointer to the heap ring buffer / 堆环形队列指针
      */
-    void SetHeapRingBuffer(HeapRingBuffer<LogEntry>* buffer) {
+    void SetHeapRingBuffer(HeapRingBuffer<LogEntry, EnableWFC>* buffer) {
         m_heapRingBuffer = buffer;
     }
 
@@ -86,7 +89,7 @@ public:
      *
      * @param buffer Pointer to the shared ring buffer / 共享环形队列指针
      */
-    void SetSharedRingBuffer(SharedRingBuffer<LogEntry>* buffer) {
+    void SetSharedRingBuffer(SharedRingBuffer<LogEntry, EnableWFC>* buffer) {
         m_sharedRingBuffer = buffer;
     }
 
@@ -311,8 +314,8 @@ private:
 
     std::shared_ptr<Sink> m_sink;                 ///< Output sink / 输出 Sink
     std::shared_ptr<Format> m_format;             ///< Formatter / 格式化器
-    HeapRingBuffer<LogEntry>* m_heapRingBuffer;   ///< Heap ring buffer / 堆环形队列
-    SharedRingBuffer<LogEntry>* m_sharedRingBuffer;  ///< Shared ring buffer / 共享环形队列
+    HeapRingBuffer<LogEntry, EnableWFC>* m_heapRingBuffer;   ///< Heap ring buffer / 堆环形队列
+    SharedRingBuffer<LogEntry, EnableWFC>* m_sharedRingBuffer;  ///< Shared ring buffer / 共享环形队列
     std::thread m_thread;                         ///< Worker thread / 工作线程
     std::atomic<bool> m_running;                  ///< Running flag / 运行标志
     std::chrono::microseconds m_pollInterval;     ///< Poll interval / 轮询间隔

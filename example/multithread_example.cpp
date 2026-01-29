@@ -38,6 +38,10 @@ const char* kModuleNames[] = {"network", "database", "cache", "worker"};
 constexpr int kThreadsPerProcess = 4;
 constexpr int kMessagesPerThread = 5;
 
+// Global logger pointer for multi-threaded access
+// 全局日志器指针用于多线程访问
+static oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, false>* g_logger = nullptr;
+
 /**
  * @brief Thread worker function - simulates a module
  * @brief 线程工作函数 - 模拟一个模块
@@ -47,19 +51,18 @@ void ThreadWorker([[maybe_unused]] int processId, int threadId, const std::strin
     
     // Set module name for this thread using NameManager
     // 使用 NameManager 设置此线程的模块名
-    oneplog::NameManager::SetModuleName(moduleName);
+    oneplog::NameManager<false>::SetModuleName(moduleName);
     
     for (int i = 0; i < kMessagesPerThread; ++i) {
         // Log with process and module info / 记录带有进程和模块信息的日志
-        log::Info("[{}-T{}] [{}] Processing task {}", processName, threadId, moduleName, i);
+        g_logger->Info("[{}-T{}] [{}] Processing task {}", processName, threadId, moduleName, i);
         
         // 模拟不同模块的工作时间 / Simulate different module work times
         int delay = 10 + threadId * 5;
         std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     }
     
-    // WFC 确保最后一条消息写入 / WFC ensures last message is written
-    log::InfoWFC("[{}-T{}] [{}] Module completed", processName, threadId, moduleName);
+    g_logger->Info("[{}-T{}] [{}] Module completed", processName, threadId, moduleName);
 }
 
 /**
@@ -71,29 +74,29 @@ void DemoModuleNameInheritance(const std::string& processName) {
     std::cout << "--- Module Name Inheritance Demo / 模块名继承演示 ---" << std::endl;
     
     // Set parent module name / 设置父模块名
-    oneplog::NameManager::SetModuleName("supervisor");
-    log::Info("[{}] Parent thread module: {}", processName, oneplog::NameManager::GetModuleName());
+    oneplog::NameManager<false>::SetModuleName("supervisor");
+    g_logger->Info("[{}] Parent thread module: {}", processName, oneplog::NameManager<false>::GetModuleName());
     
     // Create child thread that inherits module name
     // 创建继承模块名的子线程
-    auto childThread = oneplog::ThreadWithModuleName::Create([&processName]() {
+    auto childThread = oneplog::ThreadWithModuleName<false>::Create([&processName]() {
         // Child inherits "supervisor" module name / 子线程继承 "supervisor" 模块名
-        log::Info("[{}] Child thread inherited module: {}", 
-                  processName, oneplog::NameManager::GetModuleName());
+        g_logger->Info("[{}] Child thread inherited module: {}", 
+                  processName, oneplog::NameManager<false>::GetModuleName());
         
         // Create grandchild thread / 创建孙线程
-        auto grandchildThread = oneplog::ThreadWithModuleName::Create([&processName]() {
-            log::Info("[{}] Grandchild thread inherited module: {}", 
-                      processName, oneplog::NameManager::GetModuleName());
+        auto grandchildThread = oneplog::ThreadWithModuleName<false>::Create([&processName]() {
+            g_logger->Info("[{}] Grandchild thread inherited module: {}", 
+                      processName, oneplog::NameManager<false>::GetModuleName());
         });
         grandchildThread.join();
     });
     childThread.join();
     
     // Create thread with explicit module name / 创建具有显式模块名的线程
-    auto namedThread = oneplog::ThreadWithModuleName::CreateWithName("explicit_module", [&processName]() {
-        log::Info("[{}] Thread with explicit module: {}", 
-                  processName, oneplog::NameManager::GetModuleName());
+    auto namedThread = oneplog::ThreadWithModuleName<false>::CreateWithName("explicit_module", [&processName]() {
+        g_logger->Info("[{}] Thread with explicit module: {}", 
+                  processName, oneplog::NameManager<false>::GetModuleName());
     });
     namedThread.join();
 }
@@ -103,28 +106,33 @@ void DemoModuleNameInheritance(const std::string& processName) {
  * @brief 运行带有多个线程的进程
  */
 void RunProcess(int processId, const std::string& processName) {
-    // 初始化日志器 / Initialize logger
-    oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::Async;
-    config.level = oneplog::Level::Debug;
-    config.processName = processName;  // Set process name via config / 通过配置设置进程名
-    oneplog::Init(config);
+    // Create async logger
+    // 创建异步日志器
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, false> logger;
+    
+    auto format = std::make_shared<oneplog::ConsoleFormat>();
+    format->SetProcessName(processName);
+    logger.SetFormat(format);
+    logger.SetSink(std::make_shared<oneplog::ConsoleSink>());
+    logger.Init();
+    
+    g_logger = &logger;
     
     // Set initial module name / 设置初始模块名
-    oneplog::NameManager::SetModuleName("main");
+    oneplog::NameManager<false>::SetModuleName("main");
     
 #ifdef ONEPLOG_HAS_FORK
-    log::Info("[{}] Started with PID={}, launching {} threads", 
+    logger.Info("[{}] Started with PID={}, launching {} threads", 
               processName, getpid(), kThreadsPerProcess);
 #else
-    log::Info("[{}] Started, launching {} threads", processName, kThreadsPerProcess);
+    logger.Info("[{}] Started, launching {} threads", processName, kThreadsPerProcess);
 #endif
     
-    log::Info("[{}] Process={}, Module={}", 
+    logger.Info("[{}] Process={}, Module={}", 
               processName, 
-              oneplog::NameManager::GetProcessName(),
-              oneplog::NameManager::GetModuleName());
-    log::Info("[{}] Modules: network(T0), database(T1), cache(T2), worker(T3)", processName);
+              oneplog::NameManager<false>::GetProcessName(),
+              oneplog::NameManager<false>::GetModuleName());
+    logger.Info("[{}] Modules: network(T0), database(T1), cache(T2), worker(T3)", processName);
     
     // 创建线程 / Create threads
     std::vector<std::thread> threads;
@@ -137,7 +145,7 @@ void RunProcess(int processId, const std::string& processName) {
         thread.join();
     }
     
-    log::InfoWFC("[{}] All {} threads completed", processName, kThreadsPerProcess);
+    logger.Info("[{}] All {} threads completed", processName, kThreadsPerProcess);
     
     // Demonstrate module name inheritance (only in parent process)
     // 演示模块名继承（仅在父进程中）
@@ -145,8 +153,9 @@ void RunProcess(int processId, const std::string& processName) {
         DemoModuleNameInheritance(processName);
     }
     
-    log::Flush();
-    oneplog::Shutdown();
+    logger.Flush();
+    logger.Shutdown();
+    g_logger = nullptr;
 }
 
 #ifdef ONEPLOG_HAS_FORK
@@ -231,3 +240,4 @@ int main() {
 }
 
 #endif  // ONEPLOG_SYNC_ONLY
+

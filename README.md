@@ -42,7 +42,7 @@ target("your_target")
 include(FetchContent)
 FetchContent_Declare(oneplog
     GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
-    GIT_TAG v0.0.1)
+    GIT_TAG v0.1.0)
 FetchContent_MakeAvailable(oneplog)
 target_link_libraries(your_target PRIVATE oneplog)
 ```
@@ -89,40 +89,60 @@ int main() {
     // 一行初始化（异步模式 + 控制台输出）
     oneplog::Init();
     
-    // 使用 log:: 静态类记录日志
-    log::Info("Hello, {}!", "onePlog");
-    log::Error("Error code: {}", 42);
+    // 使用全局函数记录日志（推荐）
+    oneplog::Info("Hello, {}!", "onePlog");
+    oneplog::Error("Error code: {}", 42);
+    oneplog::Debug("Debug message");  // Release 模式下被编译器优化掉
     
-    // 或使用全局函数
-    oneplog::Info("Global function style");
+    // 或使用 log:: 静态类（旧版 API）
+    log::Info("Static class style");
     
     // 使用宏
     ONEPLOG_INFO("Macro logging: {}", "test");
     
-    // 关闭
+    // 刷新并关闭
+    oneplog::Flush();
     oneplog::Shutdown();
     return 0;
 }
 ```
 
-### 自定义配置
+### 自定义 Logger 实例
+
+当需要非默认配置（如同步模式、自定义级别、启用 WFC）时，使用自定义 Logger 实例：
 
 ```cpp
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // 使用自定义配置初始化
-    oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::Sync;  // 同步模式
-    config.level = oneplog::Level::Debug;
-    oneplog::Init(config);
+    // 创建同步模式 Logger（模板参数：Mode, Level, EnableWFC）
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Debug, false> logger;
+    logger.SetSink(std::make_shared<oneplog::ConsoleSink>());
+    logger.SetFormat(std::make_shared<oneplog::ConsoleFormat>());
+    logger.Init();
     
-    // 动态修改 Sink 和 Format
-    oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log"));
-    oneplog::SetFormat(std::make_shared<oneplog::FileFormat>());
+    logger.Info("Custom logger message");
+    logger.Debug("Debug info");
     
-    log::Info("Custom logger message");
-    
+    logger.Shutdown();
+    return 0;
+}
+```
+
+### 自定义默认 Logger 类型
+
+通过宏定义自定义全局 API 使用的默认 Logger 类型：
+
+```cpp
+// 在包含头文件之前定义
+#define ONEPLOG_DEFAULT_MODE oneplog::Mode::Sync
+#define ONEPLOG_DEFAULT_LEVEL oneplog::Level::Debug
+#define ONEPLOG_DEFAULT_ENABLE_WFC true
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    oneplog::Init();  // 使用自定义的默认类型
+    oneplog::Info("Now using Sync mode with Debug level");
     oneplog::Shutdown();
     return 0;
 }
@@ -415,6 +435,44 @@ int main(int argc, char* argv[]) {
 | `ONEPLOG_BUILD_EXAMPLES` | 构建示例 | OFF |
 | `ONEPLOG_USE_FMT` | 使用 fmt 库 | OFF |
 
+### 编译宏
+
+#### 模式选择宏
+
+| 宏 | 说明 |
+|------|------|
+| `ONEPLOG_SYNC_ONLY` | 仅编译同步模式代码 |
+| `ONEPLOG_ASYNC_ONLY` | 仅编译异步模式代码 |
+| `ONEPLOG_MPROC_ONLY` | 仅编译多进程模式代码 |
+
+注意：这三个宏互斥，不能同时定义。
+
+#### 编译时日志级别
+
+使用 `ONEPLOG_ACTIVE_LEVEL` 宏可以在编译时完全移除低于指定级别的日志代码：
+
+| 值 | 级别 | 说明 |
+|------|------|------|
+| 0 | Trace | 默认，启用所有级别 |
+| 1 | Debug | 移除 Trace |
+| 2 | Info | 移除 Trace, Debug |
+| 3 | Warn | 移除 Trace, Debug, Info |
+| 4 | Error | 移除 Trace, Debug, Info, Warn |
+| 5 | Critical | 仅保留 Critical |
+| 6 | Off | 禁用所有日志 |
+
+示例：
+```cpp
+// 在包含头文件之前定义
+#define ONEPLOG_ACTIVE_LEVEL 3  // 仅 Warn 及以上级别会被编译
+#include <oneplog/oneplog.hpp>
+```
+
+或在 CMake 中：
+```cmake
+target_compile_definitions(your_target PRIVATE ONEPLOG_ACTIVE_LEVEL=3)
+```
+
 ## 示例程序
 
 | 示例 | 说明 |
@@ -473,6 +531,33 @@ xmake -r benchmark_compare
 ./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
 ```
 
+### WFC 编译时开销测试
+
+测试启用 WFC 编译时标志（`EnableWFC=true`）但不使用 WFC 方法时的性能开销（100 次运行平均值 ± 标准差）：
+
+| 测试项 | WFC 禁用 | WFC 启用 | 开销 |
+|--------|----------|----------|------|
+| 异步模式（单线程） | 2810 万 ± 417 万 ops/sec | 2876 万 ± 495 万 ops/sec | +2.4%（噪声） |
+| 异步模式（4线程） | 1337 万 ± 133 万 ops/sec | 1309 万 ± 120 万 ops/sec | -2.1%（噪声） |
+| 多进程模式（单线程） | 1540 万 ± 319 万 ops/sec | 1635 万 ± 354 万 ops/sec | +6.2%（噪声） |
+| 多进程模式（4线程） | 1012 万 ± 102 万 ops/sec | 1020 万 ± 122 万 ops/sec | 无显著差异 |
+
+**注意**：当前实现中，消费者线程（WriterThread）在读取每条日志时都会检查 WFC 标志位（`IsWFCEnabled()`），无论 `EnableWFC` 模板参数是 `true` 还是 `false`。这是因为 `RingBufferBase` 不知道模板参数。
+
+**为什么开销很小**：
+- 原子读取（`atomic<uint8_t>::load`）在现代 CPU 上非常快（~1-2 纳秒）
+- CPU 分支预测器对几乎总是 `false` 的分支预测很好
+- `wfc` 字段与 `state` 字段在同一缓存行，读取 `state` 时已加载
+
+**结论**：WFC 编译时标志在不使用 WFC 方法时开销可忽略不计。
+
+运行 WFC 开销测试：
+```bash
+cd example
+xmake -P . -m release
+./build/macosx/arm64/release/benchmark_wfc_overhead -r 100
+```
+
 命令行参数：
 - `-i <iterations>`: 每次测试的迭代次数（默认 500000）
 - `-t <threads>`: 多线程测试的线程数（默认 4）
@@ -492,10 +577,70 @@ xmake -r benchmark_compare
 - [x] PipelineThread 实现（多进程模式管道线程）
 - [x] WriterThread 实现（日志输出线程）
 - [x] Logger 实现（Sync/Async/MProc 模式、WFC 支持）
+- [x] 模板化 Logger 实现（编译时模式/级别选择、零开销抽象）
 - [x] 全局 API（DefaultLogger、便捷函数、进程/模块名称）
 - [x] 宏定义（ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL、WFC、条件日志、编译时禁用）
 - [x] MemoryPool 实现（无锁内存池、预分配、分配/释放）
 - [x] 示例代码（同步模式、异步模式、多进程模式、Exec 子进程、WFC）
+
+## 模板化日志器
+
+onePlog 使用模板化的 `Logger` 类，允许在编译时指定运行模式、最小日志级别和 WFC 功能，实现零开销抽象。
+
+### 模板参数
+
+```cpp
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+class Logger;
+```
+
+- `M`: 运行模式（`Mode::Sync`、`Mode::Async`、`Mode::MProc`）
+- `L`: 编译时最小日志级别（低于此级别的日志调用被编译器优化掉）
+- `EnableWFC`: 是否启用 WFC（Wait For Completion）功能
+
+### 类型别名
+
+```cpp
+// 预定义的类型别名
+oneplog::SyncLogger<>           // 同步模式，默认级别
+oneplog::AsyncLogger<>          // 异步模式，默认级别
+oneplog::MProcLogger<>          // 多进程模式，默认级别
+
+oneplog::DebugLogger            // 异步模式，Debug 级别
+oneplog::ReleaseLogger          // 异步模式，Info 级别
+oneplog::DebugLoggerWFC         // 异步模式，Debug 级别，启用 WFC
+oneplog::ReleaseLoggerWFC       // 异步模式，Info 级别，启用 WFC
+```
+
+### 编译时级别过滤
+
+模板参数 `L` 指定编译时最小日志级别。低于此级别的日志调用会被编译器完全优化掉：
+
+```cpp
+// 最小级别为 Warn
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Warn> logger;
+
+logger.Trace("...");    // 编译为空操作
+logger.Debug("...");    // 编译为空操作
+logger.Info("...");     // 编译为空操作
+logger.Warn("...");     // 正常记录
+logger.Error("...");    // 正常记录
+logger.Critical("..."); // 正常记录
+```
+
+### WFC 功能
+
+WFC（Wait For Completion）功能可以在编译时启用或禁用：
+
+```cpp
+// 启用 WFC
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, true> logger;
+logger.InfoWFC("This will wait for completion");
+
+// 禁用 WFC（默认）
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, false> logger2;
+logger2.InfoWFC("This degrades to normal Info()");  // 降级为普通日志
+```
 
 ## 许可证
 

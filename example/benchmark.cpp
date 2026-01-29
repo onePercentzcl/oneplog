@@ -177,14 +177,13 @@ private:
  */
 Statistics BenchmarkSyncSingleThread(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_sync", oneplog::Mode::Sync);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
-    logger->Init();
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+    logger.SetSink(nullSink);
+    logger.Init();
 
     // Warmup / 预热
     for (int i = 0; i < config.warmupIterations; ++i) {
-        logger->Info("Warmup message {}", i);
+        logger.Info("Warmup message {}", i);
     }
     nullSink->Reset();
 
@@ -195,7 +194,7 @@ Statistics BenchmarkSyncSingleThread(const BenchmarkConfig& config) {
     auto start = Clock::now();
     for (int i = 0; i < config.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Benchmark message {} with value {}", i, 3.14159);
+        logger.Info("Benchmark message {} with value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
@@ -211,20 +210,18 @@ Statistics BenchmarkSyncSingleThread(const BenchmarkConfig& config) {
  */
 Statistics BenchmarkAsyncSingleThread(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_async", oneplog::Mode::Async);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(nullSink);
     
     oneplog::LoggerConfig logConfig;
-    logConfig.mode = oneplog::Mode::Async;
     logConfig.heapRingBufferSize = 1024 * 1024;  // 1M entries
-    logger->Init(logConfig);
+    logger.Init(logConfig);
 
     // Warmup / 预热
     for (int i = 0; i < config.warmupIterations; ++i) {
-        logger->Info("Warmup message {}", i);
+        logger.Info("Warmup message {}", i);
     }
-    logger->Flush();
+    logger.Flush();
     nullSink->Reset();
 
     // Benchmark / 基准测试
@@ -234,14 +231,14 @@ Statistics BenchmarkAsyncSingleThread(const BenchmarkConfig& config) {
     auto start = Clock::now();
     for (int i = 0; i < config.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Benchmark message {} with value {}", i, 3.14159);
+        logger.Info("Benchmark message {} with value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     double totalTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalculateStats(latencies, totalTimeMs);
@@ -253,20 +250,18 @@ Statistics BenchmarkAsyncSingleThread(const BenchmarkConfig& config) {
  */
 Statistics BenchmarkAsyncMultiThread(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_async_mt", oneplog::Mode::Async);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(nullSink);
     
     oneplog::LoggerConfig logConfig;
-    logConfig.mode = oneplog::Mode::Async;
     logConfig.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logConfig);
+    logger.Init(logConfig);
 
     // Warmup / 预热
     for (int i = 0; i < config.warmupIterations; ++i) {
-        logger->Info("Warmup message {}", i);
+        logger.Info("Warmup message {}", i);
     }
-    logger->Flush();
+    logger.Flush();
     nullSink->Reset();
 
     int iterPerThread = config.iterations / config.threads;
@@ -282,7 +277,7 @@ Statistics BenchmarkAsyncMultiThread(const BenchmarkConfig& config) {
             }
             for (int i = 0; i < iterPerThread; ++i) {
                 auto t1 = Clock::now();
-                logger->Info("Thread {} message {} value {}", t, i, 3.14159);
+                logger.Info("Thread {} message {} value {}", t, i, 3.14159);
                 auto t2 = Clock::now();
                 threadLatencies[t].push_back(
                     std::chrono::duration_cast<Duration>(t2 - t1).count());
@@ -298,8 +293,8 @@ Statistics BenchmarkAsyncMultiThread(const BenchmarkConfig& config) {
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     // Merge latencies / 合并延迟数据
     std::vector<int64_t> allLatencies;
@@ -363,16 +358,15 @@ Statistics BenchmarkMultiProcess(const BenchmarkConfig& config) {
         } else if (pid == 0) {
             // Child process / 子进程
             auto nullSink = std::make_shared<NullSink>();
-            auto logger = std::make_shared<oneplog::Logger>("bench_mproc", oneplog::Mode::Sync);
-            logger->SetSink(nullSink);
-            logger->SetLevel(oneplog::Level::Info);
-            logger->Init();
+            oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+            logger.SetSink(nullSink);
+            logger.Init();
             
             // Collect latencies / 收集延迟数据
             size_t idx = 0;
             for (int i = 0; i < iterPerProcess; ++i) {
                 auto t1 = Clock::now();
-                logger->Info("Process {} message {} value {}", p, i, 3.14159);
+                logger.Info("Process {} message {} value {}", p, i, 3.14159);
                 auto t2 = Clock::now();
                 sharedData->latencies[p][idx++] = 
                     std::chrono::duration_cast<Duration>(t2 - t1).count();
@@ -381,7 +375,7 @@ Statistics BenchmarkMultiProcess(const BenchmarkConfig& config) {
             sharedData->latencyCounts[p] = idx;
             sharedData->ready[p].store(true);
             
-            logger->Flush();
+            logger.Flush();
             _exit(0);
         } else {
             childPids.push_back(pid);
@@ -456,7 +450,7 @@ Statistics BenchmarkSnapshotCapture(const BenchmarkConfig& config) {
  * @brief HeapRingBuffer 入队/出队基准测试
  */
 Statistics BenchmarkRingBuffer(const BenchmarkConfig& config) {
-    oneplog::HeapRingBuffer<oneplog::LogEntry> buffer(65536);
+    oneplog::HeapRingBuffer<oneplog::LogEntry, false> buffer(65536);
     std::vector<int64_t> latencies;
     latencies.reserve(config.iterations);
 
@@ -536,14 +530,12 @@ Statistics BenchmarkFormat(const BenchmarkConfig& config) {
  */
 Statistics BenchmarkAsyncWFC(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_wfc", oneplog::Mode::Async);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, true> logger;
+    logger.SetSink(nullSink);
     
     oneplog::LoggerConfig logConfig;
-    logConfig.mode = oneplog::Mode::Async;
     logConfig.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logConfig);
+    logger.Init(logConfig);
 
     // Use fewer iterations for WFC (it's slower)
     // WFC 使用较少的迭代次数（因为它更慢）
@@ -551,7 +543,7 @@ Statistics BenchmarkAsyncWFC(const BenchmarkConfig& config) {
 
     // Warmup / 预热
     for (int i = 0; i < 100; ++i) {
-        logger->InfoWFC("Warmup WFC message {}", i);
+        logger.InfoWFC("Warmup WFC message {}", i);
     }
     nullSink->Reset();
 
@@ -562,14 +554,14 @@ Statistics BenchmarkAsyncWFC(const BenchmarkConfig& config) {
     auto start = Clock::now();
     for (int i = 0; i < wfcIterations; ++i) {
         auto t1 = Clock::now();
-        logger->InfoWFC("WFC benchmark message {} with value {}", i, 3.14159);
+        logger.InfoWFC("WFC benchmark message {} with value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     double totalTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalculateStats(latencies, totalTimeMs);
@@ -584,20 +576,18 @@ Statistics BenchmarkAsyncWFC(const BenchmarkConfig& config) {
  */
 Statistics BenchmarkWorkerThreadLatency(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_worker", oneplog::Mode::Async);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(nullSink);
     
     oneplog::LoggerConfig logConfig;
-    logConfig.mode = oneplog::Mode::Async;
     logConfig.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logConfig);
+    logger.Init(logConfig);
 
     // Warmup / 预热
     for (int i = 0; i < config.warmupIterations; ++i) {
-        logger->Info("Warmup message {}", i);
+        logger.Info("Warmup message {}", i);
     }
-    logger->Flush();
+    logger.Flush();
     nullSink->Reset();
 
     // Benchmark: measure call duration / 基准测试：测量调用耗时
@@ -607,14 +597,14 @@ Statistics BenchmarkWorkerThreadLatency(const BenchmarkConfig& config) {
     auto start = Clock::now();
     for (int i = 0; i < config.iterations; ++i) {
         auto t1 = Clock::now();
-        logger->Info("Worker thread test message {} value {}", i, 3.14159);
+        logger.Info("Worker thread test message {} value {}", i, 3.14159);
         auto t2 = Clock::now();
         latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     double totalTimeMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalculateStats(latencies, totalTimeMs);
@@ -629,22 +619,20 @@ Statistics BenchmarkWorkerThreadLatency(const BenchmarkConfig& config) {
  */
 Statistics BenchmarkWorkerThreadLatencyMT(const BenchmarkConfig& config) {
     auto nullSink = std::make_shared<NullSink>();
-    auto logger = std::make_shared<oneplog::Logger>("bench_worker_mt", oneplog::Mode::Async);
-    logger->SetSink(nullSink);
-    logger->SetLevel(oneplog::Level::Info);
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    logger.SetSink(nullSink);
     
     oneplog::LoggerConfig logConfig;
-    logConfig.mode = oneplog::Mode::Async;
     logConfig.heapRingBufferSize = 1024 * 1024;
-    logger->Init(logConfig);
+    logger.Init(logConfig);
 
     int iterPerThread = config.iterations / config.threads;
 
     // Warmup / 预热
     for (int i = 0; i < config.warmupIterations; ++i) {
-        logger->Info("Warmup message {}", i);
+        logger.Info("Warmup message {}", i);
     }
-    logger->Flush();
+    logger.Flush();
     nullSink->Reset();
 
     std::vector<std::vector<int64_t>> threadLatencies(config.threads);
@@ -659,7 +647,7 @@ Statistics BenchmarkWorkerThreadLatencyMT(const BenchmarkConfig& config) {
             }
             for (int i = 0; i < iterPerThread; ++i) {
                 auto t1 = Clock::now();
-                logger->Info("Thread {} worker test {} value {}", t, i, 3.14159);
+                logger.Info("Thread {} worker test {} value {}", t, i, 3.14159);
                 auto t2 = Clock::now();
                 threadLatencies[t].push_back(
                     std::chrono::duration_cast<Duration>(t2 - t1).count());
@@ -675,8 +663,8 @@ Statistics BenchmarkWorkerThreadLatencyMT(const BenchmarkConfig& config) {
     }
     auto end = Clock::now();
 
-    logger->Flush();
-    logger->Shutdown();
+    logger.Flush();
+    logger.Shutdown();
 
     // Merge latencies / 合并延迟数据
     std::vector<int64_t> allLatencies;
