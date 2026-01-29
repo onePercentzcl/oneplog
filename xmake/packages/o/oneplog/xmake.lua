@@ -4,6 +4,7 @@ package("oneplog")
     set_license("MIT")
     
     add_urls("https://github.com/onePercentzcl/oneplog.git")
+    add_versions("v0.1.0", "v0.1.0")
     add_versions("v0.0.1", "v0.0.1")
     
     add_configs("header_only", {description = "Use header-only mode", default = false, type = "boolean"})

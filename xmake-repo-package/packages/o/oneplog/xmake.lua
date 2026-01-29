@@ -5,6 +5,7 @@ package("oneplog")
     
     add_urls("https://github.com/onePercentzcl/oneplog/archive/refs/tags/$(version).tar.gz",
              "https://github.com/onePercentzcl/oneplog.git")
+    add_versions("v0.1.0", "")  -- SHA256 需要在发布后获取
     add_versions("v0.0.1", "")  -- SHA256 需要在发布后获取
     
     add_configs("shared", {description = "Build shared library", default = false, type = "boolean"})
