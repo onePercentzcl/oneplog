@@ -85,8 +85,8 @@ int main() {
 - [x] SharedMemory manager (metadata, config, process/thread name table)
 - [x] Format implementation (PatternFormat, JsonFormat)
 - [x] Sink implementation (ConsoleSink, FileSink, NetworkSink)
-- [ ] PipelineThread implementation
-- [ ] WriterThread implementation
+- [x] PipelineThread implementation (multi-process mode pipeline thread)
+- [x] WriterThread implementation (log output thread)
 - [ ] Logger implementation
 
 ## License

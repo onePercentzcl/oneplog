@@ -104,8 +104,8 @@ int main() {
 - [x] SharedMemory 管理器（元数据、配置、进程/线程名称表）
 - [x] Format 实现（PatternFormat、JsonFormat）
 - [x] Sink 实现（ConsoleSink、FileSink、NetworkSink）
-- [ ] PipelineThread 实现
-- [ ] WriterThread 实现
+- [x] PipelineThread 实现（多进程模式管道线程）
+- [x] WriterThread 实现（日志输出线程）
 - [ ] Logger 实现
 
 ## 许可证

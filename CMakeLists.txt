@@ -50,6 +50,8 @@ set(ONEPLOG_HEADERS
     include/oneplog/log_entry.hpp
     include/oneplog/format.hpp
     include/oneplog/sink.hpp
+    include/oneplog/pipeline_thread.hpp
+    include/oneplog/writer_thread.hpp
 )
 
 set(ONEPLOG_SOURCES
@@ -59,6 +61,8 @@ set(ONEPLOG_SOURCES
     src/shared_ring_buffer.cpp
     src/format.cpp
     src/sink.cpp
+    src/pipeline_thread.cpp
+    src/writer_thread.cpp
 )
 
 # ==============================================================================
