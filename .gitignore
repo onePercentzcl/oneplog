@@ -7,6 +7,9 @@ out/
 # XMake
 .xmake/
 
+# Kiro
+.kiro/
+
 # IDE
 .idea/
 .vscode/
