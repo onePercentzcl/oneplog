@@ -257,7 +257,9 @@ public:
                     // Format the message using BinarySnapshot
                     // 使用 BinarySnapshot 格式化消息
                     if (!entry.snapshot.IsEmpty()) {
-                        result += entry.snapshot.Format("{}");
+                        // Format all captured arguments
+                        // 格式化所有捕获的参数
+                        result += entry.snapshot.FormatAll();
                     }
                     break;
             }
@@ -546,7 +548,7 @@ public:
         oss << "," << newline;
         std::string message;
         if (!entry.snapshot.IsEmpty()) {
-            message = entry.snapshot.Format("{}");
+            message = entry.snapshot.FormatAll();
         }
         oss << indent << "\"message\":" << space << "\"" << EscapeJson(message) << "\"" << newline;
 

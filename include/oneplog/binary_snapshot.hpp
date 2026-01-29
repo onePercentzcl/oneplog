@@ -361,6 +361,95 @@ public:
         return result;
     }
 
+    /**
+     * @brief Format all captured arguments using the first argument as format string
+     * @brief 使用第一个参数作为格式字符串格式化所有捕获的参数
+     *
+     * The first captured argument should be the format string (StringView).
+     * Subsequent arguments are formatted according to {} placeholders.
+     * 第一个捕获的参数应该是格式字符串（StringView）。
+     * 后续参数根据 {} 占位符进行格式化。
+     *
+     * @return Formatted string with all arguments / 包含所有参数的格式化字符串
+     */
+    std::string FormatAll() const {
+        if (m_argCount == 0) {
+            return std::string();
+        }
+
+        // First argument should be the format string
+        // 第一个参数应该是格式字符串
+        size_t offset = kHeaderSize;
+        TypeTag firstTag = static_cast<TypeTag>(m_buffer[offset]);
+
+        if (firstTag == TypeTag::StringView || firstTag == TypeTag::StringCopy) {
+            // Extract format string / 提取格式字符串
+            std::string fmtStr;
+            ++offset;  // Skip tag
+
+            if (firstTag == TypeTag::StringView) {
+                const char* ptr;
+                std::memcpy(&ptr, &m_buffer[offset], sizeof(ptr));
+                offset += sizeof(ptr);
+                uint32_t len;
+                std::memcpy(&len, &m_buffer[offset], sizeof(len));
+                offset += sizeof(len);
+                if (ptr != nullptr && len > 0) {
+                    fmtStr.assign(ptr, len);
+                }
+            } else {  // StringCopy
+                uint16_t len;
+                std::memcpy(&len, &m_buffer[offset], sizeof(len));
+                offset += sizeof(len);
+                if (len > 0) {
+                    fmtStr.assign(reinterpret_cast<const char*>(&m_buffer[offset]), len);
+                    offset += len;
+                }
+            }
+
+            // If only format string (no placeholders or no more args), return it
+            // 如果只有格式字符串（没有占位符或没有更多参数），直接返回
+            if (m_argCount == 1) {
+                return fmtStr;
+            }
+
+            // Format with remaining arguments / 使用剩余参数格式化
+            std::string result;
+            result.reserve(256);
+            const char* p = fmtStr.c_str();
+            uint16_t argIndex = 1;  // Skip format string (arg 0)
+
+            while (*p != '\0') {
+                if (*p == '{' && *(p + 1) == '}') {
+                    // Found placeholder {} / 找到占位符 {}
+                    if (argIndex < m_argCount && offset < m_offset) {
+                        FormatArg(result, offset);
+                        ++argIndex;
+                    }
+                    p += 2;  // Skip {}
+                } else {
+                    result += *p++;
+                }
+            }
+
+            return result;
+        }
+
+        // Fallback: format all arguments separated by space
+        // 回退：用空格分隔格式化所有参数
+        std::string result;
+        result.reserve(256);
+
+        for (uint16_t i = 0; i < m_argCount && offset < m_offset; ++i) {
+            if (i > 0) {
+                result += ' ';
+            }
+            FormatArg(result, offset);
+        }
+
+        return result;
+    }
+
     // =========================================================================
     // Pointer conversion / 指针转换
     // =========================================================================

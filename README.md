@@ -110,7 +110,7 @@ int main() {
 - [x] 全局 API（DefaultLogger、便捷函数、进程/模块名称）
 - [x] 宏定义（ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL、WFC、条件日志、编译时禁用）
 - [x] MemoryPool 实现（无锁内存池、预分配、分配/释放）
-- [ ] 示例代码
+- [x] 示例代码（同步模式、异步模式、多进程模式、WFC）
 
 ## 许可证
 

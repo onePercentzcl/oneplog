@@ -317,7 +317,7 @@ private:
 
         // Format message from snapshot / 从快照格式化消息
         if (!entry.snapshot.IsEmpty()) {
-            result += entry.snapshot.Format("{}");
+            result += entry.snapshot.FormatAll();
         }
 
         return result;

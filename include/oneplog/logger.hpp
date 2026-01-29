@@ -461,8 +461,19 @@ private:
         (void)loc;  // Suppress unused warning in release mode
 #endif
 
-        // Capture arguments / 捕获参数
-        entry.snapshot.Capture(std::forward<Args>(args)...);
+        // Capture format string and arguments / 捕获格式字符串和参数
+        // Format string is captured as the first argument
+        // 格式字符串作为第一个参数捕获
+        if constexpr (sizeof...(Args) == 0) {
+            // No arguments, just capture the format string as message
+            // 没有参数，只捕获格式字符串作为消息
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+        } else {
+            // Capture format string followed by arguments
+            // 捕获格式字符串，然后是参数
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+            entry.snapshot.Capture(std::forward<Args>(args)...);
+        }
 
         // Process based on mode / 根据模式处理
         switch (m_mode) {
@@ -555,7 +566,7 @@ private:
         result += "] ";
 
         if (!entry.snapshot.IsEmpty()) {
-            result += entry.snapshot.Format("{}");
+            result += entry.snapshot.FormatAll();
         }
 
         return result;
@@ -606,6 +617,10 @@ private:
     static uint32_t GetCurrentThreadId() {
 #ifdef _WIN32
         return static_cast<uint32_t>(::GetCurrentThreadId());
+#elif defined(__APPLE__)
+        uint64_t tid;
+        pthread_threadid_np(nullptr, &tid);
+        return static_cast<uint32_t>(tid);
 #else
         return static_cast<uint32_t>(pthread_self());
 #endif
