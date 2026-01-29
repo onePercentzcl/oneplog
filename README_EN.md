@@ -42,9 +42,46 @@ target("your_target")
 include(FetchContent)
 FetchContent_Declare(oneplog
     GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
-    GIT_TAG main)
+    GIT_TAG v0.0.1)
 FetchContent_MakeAvailable(oneplog)
 target_link_libraries(your_target PRIVATE oneplog)
+```
+
+#### Method 3: XMake Remote Package
+
+Create `xmake.lua` in your project root:
+```lua
+add_rules("mode.debug", "mode.release")
+set_languages("c++17")
+
+-- Add oneplog remote package
+add_requires("oneplog", {configs = {shared = false}})
+
+target("your_target")
+    set_kind("binary")
+    add_files("src/*.cpp")
+    add_packages("oneplog")
+```
+
+Then create `xmake-repo/packages/o/oneplog/xmake.lua` in your project:
+```lua
+package("oneplog")
+    set_homepage("https://github.com/onePercentzcl/oneplog")
+    set_description("High performance C++17 multi-process logging system")
+    
+    add_urls("https://github.com/onePercentzcl/oneplog.git")
+    add_versions("v0.0.1", "v0.0.1")
+    
+    on_install(function (package)
+        os.cp("include", package:installdir())
+        os.cp("src", package:installdir())
+    end)
+package_end()
+```
+
+And add to your main `xmake.lua`:
+```lua
+add_repositories("local-repo xmake-repo")
 ```
 
 ### Building oneplog Itself

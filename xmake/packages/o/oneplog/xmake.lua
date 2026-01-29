@@ -4,9 +4,10 @@ package("oneplog")
     set_license("MIT")
     
     add_urls("https://github.com/onePercentzcl/oneplog.git")
-    add_versions("latest", "main")
+    add_versions("v0.0.1", "v0.0.1")
     
     add_configs("header_only", {description = "Use header-only mode", default = false, type = "boolean"})
+    add_configs("shared", {description = "Build shared library", default = false, type = "boolean"})
     
     on_install(function (package)
         os.cp("include", package:installdir())
