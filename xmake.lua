@@ -14,12 +14,18 @@ option("shared", {default = false, description = "Build shared library / 构建�
 option("headeronly", {default = false, description = "Header-only mode / 仅头文件模式"})
 option("tests", {default = true, description = "Build tests / 构建测试"})
 option("examples", {default = true, description = "Build examples / 构建示例"})
-option("use_fmt", {default = false, description = "Use fmt library / 使用 fmt 库"})
+option("use_fmt", {default = true, description = "Use fmt library / 使用 fmt 库"})
 
 -- ==============================================================================
 -- C++ Standard / C++ 标准
 -- ==============================================================================
 set_languages("c++17")
+
+-- ==============================================================================
+-- Dependencies / 依赖
+-- ==============================================================================
+-- fmt library is included locally in include/fmt and src/
+-- fmt 库已本地包含在 include/fmt 和 src/ 目录下
 
 -- ==============================================================================
 -- Build Modes / 构建模式
@@ -58,6 +64,13 @@ local oneplog_sources = {
     "src/memory_pool.cpp"
 }
 
+-- fmt library sources (when use_fmt is enabled)
+-- fmt 库源文件（启用 use_fmt 时）
+local fmt_sources = {
+    "src/format.cc",
+    "src/os.cc"
+}
+
 -- ==============================================================================
 -- Library Target / 库目标
 -- ==============================================================================
@@ -88,9 +101,10 @@ else
             add_syslinks("pthread")
         end
         
-        -- Optional: fmt library / 可选: fmt 库
+        -- Optional: fmt library (local) / 可选: fmt 库（本地）
         if has_config("use_fmt") then
-            add_packages("fmt")
+            add_files(fmt_sources)
+            add_headerfiles("include/(fmt/*.h)")
             add_defines("ONEPLOG_USE_FMT", {public = true})
         end
     target_end()
@@ -153,6 +167,22 @@ if has_config("examples") then
         set_kind("binary")
         set_default(false)
         add_files("example/wfc_example.cpp")
+        add_deps("oneplog")
+    target_end()
+    
+    -- Exec child process example / Exec 子进程示例
+    target("exec_example")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/exec_example.cpp")
+        add_deps("oneplog")
+    target_end()
+    
+    -- Performance benchmark / 性能基准测试
+    target("benchmark")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/benchmark.cpp")
         add_deps("oneplog")
     target_end()
 end

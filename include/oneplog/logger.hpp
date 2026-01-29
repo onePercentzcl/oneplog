@@ -552,51 +552,14 @@ private:
     }
 
     /**
-     * @brief Default format for log entries
-     * @brief 日志条目的默认格式
+     * @brief Default format for log entries (uses ConsoleFormat)
+     * @brief 日志条目的默认格式（使用 ConsoleFormat）
      */
     std::string DefaultFormat(const LogEntry& entry) const {
-        std::string result;
-        result.reserve(256);
-
-        result += "[";
-        result += FormatTimestamp(entry.timestamp);
-        result += "] [";
-        result += std::string(LevelToString(entry.level, LevelNameStyle::Short4));
-        result += "] ";
-
-        if (!entry.snapshot.IsEmpty()) {
-            result += entry.snapshot.FormatAll();
-        }
-
-        return result;
-    }
-
-    /**
-     * @brief Format timestamp
-     * @brief 格式化时间戳
-     */
-    static std::string FormatTimestamp(uint64_t timestamp) {
-        auto seconds = static_cast<time_t>(timestamp / 1000000000ULL);
-        auto millis = static_cast<uint32_t>((timestamp % 1000000000ULL) / 1000000);
-
-        std::tm tm_time{};
-#ifdef _WIN32
-        localtime_s(&tm_time, &seconds);
-#else
-        localtime_r(&seconds, &tm_time);
-#endif
-
-        char buf[32];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_time);
-
-        std::string result(buf);
-        result += '.';
-        if (millis < 100) result += '0';
-        if (millis < 10) result += '0';
-        result += std::to_string(millis);
-
-        return result;
+        // Use a static ConsoleFormat for default formatting
+        // 使用静态 ConsoleFormat 进行默认格式化
+        static ConsoleFormat defaultFormat;
+        return defaultFormat.FormatEntry(entry);
     }
 
     /**

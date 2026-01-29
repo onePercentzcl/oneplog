@@ -3,11 +3,10 @@
  * @brief Multi-process mode example for onePlog
  * @brief onePlog 多进程模式示例
  *
- * This example demonstrates how to use onePlog in multi-process mode.
- * In multi-process mode, multiple processes share the same log output
- * through shared memory.
- * 此示例演示如何在多进程模式下使用 onePlog。
- * 在多进程模式下，多个进程通过共享内存共享同一个日志输出。
+ * This example demonstrates how to use onePlog across multiple processes.
+ * Each process creates its own logger but outputs to the same console.
+ * 此示例演示如何在多个进程中使用 onePlog。
+ * 每个进程创建自己的日志器，但输出到同一个控制台。
  *
  * @copyright Copyright (c) 2024 onePlog
  */
@@ -19,44 +18,40 @@
 #ifndef ONEPLOG_SYNC_ONLY
 #include <oneplog/oneplog.hpp>
 
-#ifdef __unix__
+#if defined(__unix__) || defined(__APPLE__)
+#define ONEPLOG_HAS_FORK 1
 #include <unistd.h>
 #include <sys/wait.h>
 #endif
 
-void RunParentProcess(std::shared_ptr<oneplog::Logger>& logger) {
-    std::cout << "[Parent] Starting parent process logging" << std::endl;
-    std::cout << "[父进程] 开始父进程日志记录" << std::endl;
-
-    for (int i = 0; i < 5; ++i) {
-        logger->Info("[Parent] Message {}", i);
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    std::cout << "[Parent] Parent process logging complete" << std::endl;
-    std::cout << "[父进程] 父进程日志记录完成" << std::endl;
-}
-
-#ifdef __unix__
-void RunChildProcess(const std::string& shmName) {
-    std::cout << "[Child] Starting child process" << std::endl;
-    std::cout << "[子进程] 启动子进程" << std::endl;
-
-    // Initialize as producer (connect to existing shared memory)
-    // 作为生产者初始化（连接到现有共享内存）
-    oneplog::InitProducer(shmName, 0);
+#ifdef ONEPLOG_HAS_FORK
+void RunChildProcess(int childId) {
+    // Create a new logger for this child process
+    // 为子进程创建新的日志器
+    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
+    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
+    logger->SetSink(consoleSink);
+    logger->SetLevel(oneplog::Level::Debug);
+    logger->Init();
 
     // Set process name for identification
     // 设置进程名称以便识别
-    oneplog::SetProcessName("child_process");
+    std::string procName = "child" + std::to_string(childId);
+    auto format = std::make_shared<oneplog::ConsoleFormat>();
+    format->SetProcessName(procName);
+    logger->SetFormat(format);
+
+    oneplog::SetDefaultLogger(logger);
+
+    std::cout << "[Child " << childId << "] PID=" << getpid() << " Starting" << std::endl;
 
     for (int i = 0; i < 5; ++i) {
-        oneplog::Info("[Child] Message {}", i);
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        logger->Info("[Child {}] Message {}", childId, i);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20 + childId * 10));
     }
 
-    std::cout << "[Child] Child process logging complete" << std::endl;
-    std::cout << "[子进程] 子进程日志记录完成" << std::endl;
+    std::cout << "[Child " << childId << "] Complete" << std::endl;
+    logger->Flush();
 }
 #endif
 
@@ -65,69 +60,68 @@ int main() {
     std::cout << "=== onePlog 多进程模式示例 ===" << std::endl;
     std::cout << std::endl;
 
-#ifdef __unix__
-    // Create a logger in multi-process mode
-    // 创建多进程模式的日志器
-    auto logger = std::make_shared<oneplog::Logger>("mproc_logger", oneplog::Mode::MProc);
-
-    // Create a console sink
-    // 创建控制台输出
+#ifdef ONEPLOG_HAS_FORK
+    // Create parent logger
+    // 创建父进程日志器
+    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
     auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
     logger->SetSink(consoleSink);
-
-    // Set log level
-    // 设置日志级别
     logger->SetLevel(oneplog::Level::Debug);
-
-    // Configure with custom settings
-    // 使用自定义设置配置
-    oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::MProc;
-    config.sharedMemoryName = "/oneplog_mproc_example";
-    config.sharedRingBufferSize = 1024;
-
-    // Initialize the logger (creates shared memory)
-    // 初始化日志器（创建共享内存）
-    logger->Init(config);
-
-    // Set as default logger
-    // 设置为默认日志器
-    oneplog::SetDefaultLogger(logger);
+    logger->Init();
 
     // Set process name
     // 设置进程名称
-    oneplog::SetProcessName("parent_process");
+    auto format = std::make_shared<oneplog::ConsoleFormat>();
+    format->SetProcessName("parent");
+    logger->SetFormat(format);
 
-    std::cout << "--- Forking child process / 创建子进程 ---" << std::endl;
+    oneplog::SetDefaultLogger(logger);
 
-    pid_t pid = fork();
+    std::cout << "[Parent] PID=" << getpid() << std::endl;
+    std::cout << "--- Forking child processes / 创建子进程 ---" << std::endl;
 
-    if (pid < 0) {
-        std::cerr << "Fork failed!" << std::endl;
-        return 1;
-    } else if (pid == 0) {
-        // Child process
-        // 子进程
-        RunChildProcess(config.sharedMemoryName);
-        return 0;
-    } else {
-        // Parent process
-        // 父进程
-        RunParentProcess(logger);
+    const int numChildren = 3;
+    std::vector<pid_t> childPids;
 
-        // Wait for child to complete
-        // 等待子进程完成
-        int status;
-        waitpid(pid, &status, 0);
+    for (int i = 0; i < numChildren; ++i) {
+        pid_t pid = fork();
 
-        std::cout << "[Parent] Child process exited with status " << status << std::endl;
-        std::cout << "[父进程] 子进程退出，状态码 " << status << std::endl;
+        if (pid < 0) {
+            std::cerr << "Fork failed!" << std::endl;
+            return 1;
+        } else if (pid == 0) {
+            // Child process - create new logger and run
+            // 子进程 - 创建新日志器并运行
+            RunChildProcess(i);
+            _exit(0);  // Use _exit to avoid flushing parent's buffers
+        } else {
+            // Parent process - record child PID
+            // 父进程 - 记录子进程 PID
+            childPids.push_back(pid);
+        }
     }
 
-    // Flush and shutdown
-    // 刷新并关闭
+    // Parent process logging (interleaved with children)
+    // 父进程日志记录（与子进程交错）
+    std::cout << "[Parent] Starting parent process logging" << std::endl;
+    for (int i = 0; i < 5; ++i) {
+        logger->Info("[Parent] Message {}", i);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    std::cout << "[Parent] Parent process logging complete" << std::endl;
+
+    // Wait for all children to complete
+    // 等待所有子进程完成
+    for (pid_t pid : childPids) {
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) {
+            std::cout << "[Parent] Child PID=" << pid << " exited with status " 
+                      << WEXITSTATUS(status) << std::endl;
+        }
+    }
+
     logger->Flush();
-    logger->Shutdown();
 
 #else
     std::cout << "Multi-process mode is only supported on Unix-like systems." << std::endl;
