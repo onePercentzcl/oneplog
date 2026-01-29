@@ -61,6 +61,65 @@ struct alignas(kCacheLineSize) CacheLineAligned {
 };
 
 // ==============================================================================
+// Spin Wait Helper / 自旋等待辅助函数
+// ==============================================================================
+
+/**
+ * @brief CPU pause instruction for spin-wait loops
+ * @brief 用于自旋等待循环的 CPU pause 指令
+ */
+inline void CpuPause() noexcept {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    __asm__ __volatile__("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    __asm__ __volatile__("yield" ::: "memory");
+#elif defined(__arm__) || defined(_M_ARM)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    // Fallback: compiler barrier / 回退：编译器屏障
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+}
+
+/**
+ * @brief Exponential backoff spin wait
+ * @brief 指数退避自旋等待
+ *
+ * Strategy / 策略:
+ * 1. Spin for kSpinCount iterations (pure CPU spin)
+ * 2. Execute pause instruction for kPauseCount iterations
+ * 3. Finally yield to OS scheduler
+ *
+ * @param spinCount Current spin iteration count / 当前自旋迭代计数
+ * @return Updated spin count / 更新后的自旋计数
+ */
+inline int SpinWait(int spinCount) noexcept {
+    constexpr int kSpinCount = 1000;   // Pure spin iterations / 纯自旋迭代次数
+    constexpr int kPauseCount = 2000;  // Pause iterations / pause 迭代次数
+    
+    if (spinCount < kSpinCount) {
+        // Phase 1: Pure spin / 阶段1：纯自旋
+        return spinCount + 1;
+    } else if (spinCount < kPauseCount) {
+        // Phase 2: Pause instruction / 阶段2：pause 指令
+        CpuPause();
+        return spinCount + 1;
+    } else {
+        // Phase 3: Yield to OS / 阶段3：让出 CPU
+        std::this_thread::yield();
+        return 0;  // Reset for next round / 重置以进行下一轮
+    }
+}
+
+/**
+ * @brief Simple spin wait without backoff (for short waits)
+ * @brief 简单自旋等待，无退避（用于短等待）
+ */
+inline void SpinOnce() noexcept {
+    CpuPause();
+}
+
+// ==============================================================================
 // Enums / 枚举
 // ==============================================================================
 
@@ -123,16 +182,20 @@ struct alignas(kCacheLineSize) SlotStatus {
 
     bool TryAcquire() noexcept {
         SlotState expected = SlotState::Empty;
+        // Use acquire on success (to see previous writes), relaxed on failure
+        // 成功时使用 acquire（看到之前的写入），失败时使用 relaxed
         return state.compare_exchange_strong(expected, SlotState::Writing,
-                                             std::memory_order_acq_rel, std::memory_order_relaxed);
+                                             std::memory_order_acquire, std::memory_order_relaxed);
     }
 
     void Commit() noexcept { state.store(SlotState::Ready, std::memory_order_release); }
 
     bool TryStartRead() noexcept {
         SlotState expected = SlotState::Ready;
+        // Use acquire on success (to see data written by producer), relaxed on failure
+        // 成功时使用 acquire（看到生产者写入的数据），失败时使用 relaxed
         return state.compare_exchange_strong(expected, SlotState::Reading,
-                                             std::memory_order_acq_rel, std::memory_order_relaxed);
+                                             std::memory_order_acquire, std::memory_order_relaxed);
     }
 
     void CompleteRead() noexcept { state.store(SlotState::Empty, std::memory_order_release); }
@@ -247,14 +310,16 @@ public:
         
         size_t head = m_header->head.load(std::memory_order_relaxed);
         size_t capacity = m_header->capacity;
+        int spinCount = 0;
         
         while (true) {
+            // Only need acquire to see tail updates from consumer
             size_t tail = m_header->tail.load(std::memory_order_acquire);
             
             if (head - tail >= capacity) {
                 // WFC logs NEVER get dropped
                 if (isWFC) {
-                    std::this_thread::yield();
+                    spinCount = SpinWait(spinCount);
                     head = m_header->head.load(std::memory_order_relaxed);
                     continue;
                 }
@@ -267,30 +332,33 @@ public:
                     case QueueFullPolicy::DropOldest: {
                         size_t oldestSlot = tail % capacity;
                         if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
-                            std::this_thread::yield();
+                            spinCount = SpinWait(spinCount);
                             head = m_header->head.load(std::memory_order_relaxed);
                             continue;
                         }
                         if (DropOldestEntry()) { continue; }
-                        std::this_thread::yield();
+                        spinCount = SpinWait(spinCount);
                         head = m_header->head.load(std::memory_order_relaxed);
                         continue;
                     }
                     
                     case QueueFullPolicy::Block:
                     default:
-                        std::this_thread::yield();
+                        spinCount = SpinWait(spinCount);
                         head = m_header->head.load(std::memory_order_relaxed);
                         continue;
                 }
             }
             
+            // Use release on success to ensure slot data is visible before head update
+            // Use relaxed on failure since we'll retry anyway
             if (m_header->head.compare_exchange_weak(head, head + 1,
-                                                     std::memory_order_acq_rel,
+                                                     std::memory_order_release,
                                                      std::memory_order_relaxed)) {
                 size_t slot = head % capacity;
+                int slotSpinCount = 0;
                 while (!m_slotStatus[slot].TryAcquire()) {
-                    std::this_thread::yield();
+                    slotSpinCount = SpinWait(slotSpinCount);
                 }
                 return static_cast<int64_t>(slot);
             }
@@ -362,11 +430,10 @@ public:
         if (!m_header || !m_buffer || !m_slotStatus) { return false; }
         
         size_t tail = m_header->tail.load(std::memory_order_relaxed);
-        size_t head = m_header->head.load(std::memory_order_acquire);
-        
-        if (tail >= head) { return false; }
-        
         size_t slot = tail % m_header->capacity;
+        
+        // Check slot state directly - only reads one cache line
+        // 直接检查槽位状态 - 只读取一个缓存行
         if (!m_slotStatus[slot].TryStartRead()) { return false; }
         
         item = std::move(m_buffer[slot]);
@@ -375,6 +442,7 @@ public:
         
         if (hasWFC) { m_slotStatus[slot].CompleteWFC(); }
         
+        // Use release to ensure item read is complete before tail update
         m_header->tail.store(tail + 1, std::memory_order_release);
         return true;
     }
@@ -409,10 +477,11 @@ public:
         
         size_t idx = static_cast<size_t>(slot);
         auto deadline = std::chrono::steady_clock::now() + timeout;
+        int spinCount = 0;
         
         while (std::chrono::steady_clock::now() < deadline) {
             if (m_slotStatus[idx].IsWFCCompleted()) { return true; }
-            std::this_thread::yield();
+            spinCount = SpinWait(spinCount);
         }
         return m_slotStatus[idx].IsWFCCompleted();
     }
@@ -428,10 +497,12 @@ public:
     // =========================================================================
 
     bool IsEmpty() const noexcept {
-        if (!m_header) { return true; }
-        size_t tail = m_header->tail.load(std::memory_order_acquire);
-        size_t head = m_header->head.load(std::memory_order_acquire);
-        return tail >= head;
+        if (!m_header || !m_slotStatus) { return true; }
+        size_t tail = m_header->tail.load(std::memory_order_relaxed);
+        size_t slot = tail % m_header->capacity;
+        // Check if next slot is ready - only reads one cache line
+        // 检查下一个槽位是否就绪 - 只读取一个缓存行
+        return !m_slotStatus[slot].IsReady();
     }
 
     bool IsFull() const noexcept {
@@ -481,16 +552,19 @@ public:
         
         m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
         
-        // Phase 1: Poll
+        // Phase 1: Spin poll with exponential backoff
+        // 阶段1：使用指数退避的自旋轮询
         auto pollEnd = std::chrono::steady_clock::now() + pollInterval;
+        int spinCount = 0;
         while (std::chrono::steady_clock::now() < pollEnd) {
             if (!IsEmpty()) { return true; }
-            std::this_thread::yield();
+            spinCount = SpinWait(spinCount);
         }
         
         if (!IsEmpty()) { return true; }
         
         // Phase 2: Enter waiting state
+        // 阶段2：进入等待状态
         m_header->consumerState.store(ConsumerState::WaitingNotify, std::memory_order_release);
         
         // Double-check
@@ -499,7 +573,8 @@ public:
             return true;
         }
         
-        // Phase 3: Wait
+        // Phase 3: Wait for notification
+        // 阶段3：等待通知
         bool hasData = DoWait(pollTimeout);
         m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
         
@@ -572,8 +647,9 @@ protected:
         
         m_slotStatus[slot].CompleteRead();
         
+        // Use release to ensure slot cleanup is visible before tail update
         if (m_header->tail.compare_exchange_strong(tail, tail + 1,
-                                                    std::memory_order_acq_rel,
+                                                    std::memory_order_release,
                                                     std::memory_order_relaxed)) {
             m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
             return true;
