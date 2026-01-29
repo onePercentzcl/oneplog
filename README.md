@@ -100,7 +100,7 @@ int main() {
 - [x] BinarySnapshot 实现
 - [x] LogEntry 实现（SourceLocation、LogEntryDebug、LogEntryRelease）
 - [x] HeapRingBuffer 实现（无锁环形队列、WFC 支持、通知机制、队列满策略）
-- [ ] SharedRingBuffer 实现
+- [x] SharedRingBuffer 实现（共享内存环形队列，继承自 RingBufferBase）
 - [ ] Format 实现
 - [ ] Sink 实现
 - [ ] Logger 实现

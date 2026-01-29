@@ -81,7 +81,7 @@ int main() {
 - [x] BinarySnapshot implementation
 - [x] LogEntry implementation (SourceLocation, LogEntryDebug, LogEntryRelease)
 - [x] HeapRingBuffer implementation (lock-free ring buffer, WFC support, notification mechanism, queue full policies)
-- [ ] SharedRingBuffer implementation
+- [x] SharedRingBuffer implementation (shared memory ring buffer, inherits from RingBufferBase)
 - [ ] Format implementation
 - [ ] Sink implementation
 - [ ] Logger implementation

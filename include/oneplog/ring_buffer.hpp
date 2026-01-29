@@ -145,6 +145,48 @@ struct alignas(kCacheLineSize) SlotStatus {
 using SharedSlotStatus = SlotStatus;
 
 // ==============================================================================
+// RingBufferHeader - Shared Memory Header / 共享内存头部
+// ==============================================================================
+
+/**
+ * @brief Ring buffer header for shared memory layout
+ * @brief 共享内存布局的环形队列头部
+ *
+ * This structure is placed at the beginning of shared memory.
+ * All atomic variables are cache-line aligned to prevent false sharing.
+ */
+struct alignas(kCacheLineSize) RingBufferHeader {
+    alignas(kCacheLineSize) std::atomic<size_t> head{0};
+    alignas(kCacheLineSize) std::atomic<size_t> tail{0};
+    alignas(kCacheLineSize) std::atomic<ConsumerState> consumerState{ConsumerState::Active};
+    alignas(kCacheLineSize) std::atomic<uint64_t> droppedCount{0};
+    
+    size_t capacity{0};
+    QueueFullPolicy policy{QueueFullPolicy::DropNewest};
+    uint32_t magic{0};      // Magic number for validation
+    uint32_t version{0};    // Version for compatibility check
+    
+    static constexpr uint32_t kMagic = 0x4F4E4550;  // "ONEP"
+    static constexpr uint32_t kVersion = 1;
+    
+    void Init(size_t cap, QueueFullPolicy pol) noexcept {
+        head.store(0, std::memory_order_relaxed);
+        tail.store(0, std::memory_order_relaxed);
+        consumerState.store(ConsumerState::Active, std::memory_order_relaxed);
+        droppedCount.store(0, std::memory_order_relaxed);
+        capacity = cap;
+        policy = pol;
+        magic = kMagic;
+        version = kVersion;
+    }
+    
+    bool IsValid() const noexcept {
+        return magic == kMagic && version == kVersion;
+    }
+};
+
+
+// ==============================================================================
 // RingBufferBase - Full Implementation / 环形队列基类（完整实现）
 // ==============================================================================
 
@@ -162,95 +204,33 @@ class RingBufferBase {
 public:
     static constexpr int64_t kInvalidSlot = -1;
 
-    explicit RingBufferBase(size_t capacity, QueueFullPolicy policy = QueueFullPolicy::DropNewest)
-        : m_capacity(capacity)
-        , m_policy(policy)
-        , m_buffer(capacity)
-        , m_slotStatus(capacity)
-#ifdef __linux__
-        , m_eventFd(eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE))
-#elif defined(__APPLE__)
-        , m_semaphore(dispatch_semaphore_create(0))
-#endif
-    {
-        m_head.value.store(0, std::memory_order_relaxed);
-        m_tail.value.store(0, std::memory_order_relaxed);
-        m_consumerState.value.store(ConsumerState::Active, std::memory_order_relaxed);
-        m_droppedCount.value.store(0, std::memory_order_relaxed);
-        
-        for (size_t i = 0; i < capacity; ++i) {
-            m_slotStatus[i].Reset();
-        }
-    }
-
     virtual ~RingBufferBase() {
-#ifdef __linux__
-        if (m_eventFd >= 0) {
-            close(m_eventFd);
-            m_eventFd = -1;
-        }
-#elif defined(__APPLE__)
-        m_semaphore = nullptr;
-#endif
+        CleanupNotification();
     }
 
     // Non-copyable
     RingBufferBase(const RingBufferBase&) = delete;
     RingBufferBase& operator=(const RingBufferBase&) = delete;
 
-    // Movable
-    RingBufferBase(RingBufferBase&& other) noexcept
-        : m_capacity(other.m_capacity)
-        , m_policy(other.m_policy)
-        , m_buffer(std::move(other.m_buffer))
-        , m_slotStatus(std::move(other.m_slotStatus))
-#ifdef __linux__
-        , m_eventFd(other.m_eventFd)
-#elif defined(__APPLE__)
-        , m_semaphore(other.m_semaphore)
-#endif
-    {
-        m_head.value.store(other.m_head.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        m_tail.value.store(other.m_tail.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        m_consumerState.value.store(other.m_consumerState.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        m_droppedCount.value.store(other.m_droppedCount.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-#ifdef __linux__
-        other.m_eventFd = -1;
-#elif defined(__APPLE__)
-        other.m_semaphore = nullptr;
-#endif
-    }
-
-    RingBufferBase& operator=(RingBufferBase&& other) noexcept {
-        if (this != &other) {
-#ifdef __linux__
-            if (m_eventFd >= 0) { close(m_eventFd); }
-            m_eventFd = other.m_eventFd;
-            other.m_eventFd = -1;
-#elif defined(__APPLE__)
-            m_semaphore = other.m_semaphore;
-            other.m_semaphore = nullptr;
-#endif
-            m_capacity = other.m_capacity;
-            m_policy = other.m_policy;
-            m_buffer = std::move(other.m_buffer);
-            m_slotStatus = std::move(other.m_slotStatus);
-            m_head.value.store(other.m_head.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            m_tail.value.store(other.m_tail.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            m_consumerState.value.store(other.m_consumerState.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            m_droppedCount.value.store(other.m_droppedCount.value.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        }
-        return *this;
-    }
-
     // =========================================================================
     // Configuration / 配置
     // =========================================================================
 
-    void SetPolicy(QueueFullPolicy policy) noexcept { m_policy = policy; }
-    QueueFullPolicy GetPolicy() const noexcept { return m_policy; }
-    uint64_t GetDroppedCount() const noexcept { return m_droppedCount.value.load(std::memory_order_relaxed); }
-    void ResetDroppedCount() noexcept { m_droppedCount.value.store(0, std::memory_order_relaxed); }
+    void SetPolicy(QueueFullPolicy policy) noexcept { 
+        if (m_header) { m_header->policy = policy; }
+    }
+    
+    QueueFullPolicy GetPolicy() const noexcept { 
+        return m_header ? m_header->policy : QueueFullPolicy::DropNewest; 
+    }
+    
+    uint64_t GetDroppedCount() const noexcept { 
+        return m_header ? m_header->droppedCount.load(std::memory_order_relaxed) : 0; 
+    }
+    
+    void ResetDroppedCount() noexcept { 
+        if (m_header) { m_header->droppedCount.store(0, std::memory_order_relaxed); }
+    }
 
     // =========================================================================
     // Producer Operations / 生产者操作
@@ -263,52 +243,52 @@ public:
      * @param isWFC If true, always block when full (WFC logs never dropped)
      */
     int64_t AcquireSlot(bool isWFC = false) noexcept {
-        size_t head = m_head.value.load(std::memory_order_relaxed);
+        if (!m_header || !m_slotStatus) { return kInvalidSlot; }
+        
+        size_t head = m_header->head.load(std::memory_order_relaxed);
+        size_t capacity = m_header->capacity;
         
         while (true) {
-            size_t tail = m_tail.value.load(std::memory_order_acquire);
+            size_t tail = m_header->tail.load(std::memory_order_acquire);
             
-            if (head - tail >= m_capacity) {
+            if (head - tail >= capacity) {
                 // WFC logs NEVER get dropped
                 if (isWFC) {
                     std::this_thread::yield();
-                    head = m_head.value.load(std::memory_order_relaxed);
+                    head = m_header->head.load(std::memory_order_relaxed);
                     continue;
                 }
                 
-                switch (m_policy) {
+                switch (m_header->policy) {
                     case QueueFullPolicy::DropNewest:
-                        m_droppedCount.value.fetch_add(1, std::memory_order_relaxed);
+                        m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
                         return kInvalidSlot;
                     
                     case QueueFullPolicy::DropOldest: {
-                        // Check if oldest entry is WFC - if so, block instead of dropping
-                        size_t oldestSlot = tail % m_capacity;
+                        size_t oldestSlot = tail % capacity;
                         if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
-                            // WFC entry at head, must block
                             std::this_thread::yield();
-                            head = m_head.value.load(std::memory_order_relaxed);
+                            head = m_header->head.load(std::memory_order_relaxed);
                             continue;
                         }
                         if (DropOldestEntry()) { continue; }
-                        // If can't drop, retry
                         std::this_thread::yield();
-                        head = m_head.value.load(std::memory_order_relaxed);
+                        head = m_header->head.load(std::memory_order_relaxed);
                         continue;
                     }
                     
                     case QueueFullPolicy::Block:
                     default:
                         std::this_thread::yield();
-                        head = m_head.value.load(std::memory_order_relaxed);
+                        head = m_header->head.load(std::memory_order_relaxed);
                         continue;
                 }
             }
             
-            if (m_head.value.compare_exchange_weak(head, head + 1,
-                                                   std::memory_order_acq_rel,
-                                                   std::memory_order_relaxed)) {
-                size_t slot = head % m_capacity;
+            if (m_header->head.compare_exchange_weak(head, head + 1,
+                                                     std::memory_order_acq_rel,
+                                                     std::memory_order_relaxed)) {
+                size_t slot = head % capacity;
                 while (!m_slotStatus[slot].TryAcquire()) {
                     std::this_thread::yield();
                 }
@@ -318,14 +298,16 @@ public:
     }
 
     void CommitSlot(int64_t slot, T&& item) noexcept {
-        if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) { return; }
+        if (!m_header || !m_buffer || slot < 0 || 
+            static_cast<size_t>(slot) >= m_header->capacity) { return; }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = std::move(item);
         m_slotStatus[idx].Commit();
     }
 
     void CommitSlot(int64_t slot, const T& item) noexcept {
-        if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) { return; }
+        if (!m_header || !m_buffer || slot < 0 || 
+            static_cast<size_t>(slot) >= m_header->capacity) { return; }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = item;
         m_slotStatus[idx].Commit();
@@ -352,6 +334,7 @@ public:
      */
     int64_t TryPushWFC(T&& item) noexcept {
         int64_t slot = AcquireSlot(true);
+        if (slot == kInvalidSlot) { return kInvalidSlot; }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = std::move(item);
         m_slotStatus[idx].EnableWFC();
@@ -362,6 +345,7 @@ public:
 
     int64_t TryPushWFC(const T& item) noexcept {
         int64_t slot = AcquireSlot(true);
+        if (slot == kInvalidSlot) { return kInvalidSlot; }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = item;
         m_slotStatus[idx].EnableWFC();
@@ -375,12 +359,14 @@ public:
     // =========================================================================
 
     bool TryPop(T& item) noexcept {
-        size_t tail = m_tail.value.load(std::memory_order_relaxed);
-        size_t head = m_head.value.load(std::memory_order_acquire);
+        if (!m_header || !m_buffer || !m_slotStatus) { return false; }
+        
+        size_t tail = m_header->tail.load(std::memory_order_relaxed);
+        size_t head = m_header->head.load(std::memory_order_acquire);
         
         if (tail >= head) { return false; }
         
-        size_t slot = tail % m_capacity;
+        size_t slot = tail % m_header->capacity;
         if (!m_slotStatus[slot].TryStartRead()) { return false; }
         
         item = std::move(m_buffer[slot]);
@@ -389,7 +375,7 @@ public:
         
         if (hasWFC) { m_slotStatus[slot].CompleteWFC(); }
         
-        m_tail.value.store(tail + 1, std::memory_order_release);
+        m_header->tail.store(tail + 1, std::memory_order_release);
         return true;
     }
 
@@ -411,13 +397,15 @@ public:
     // =========================================================================
 
     void MarkWFCComplete(int64_t slot) noexcept {
-        if (slot >= 0 && static_cast<size_t>(slot) < m_capacity) {
+        if (m_header && m_slotStatus && slot >= 0 && 
+            static_cast<size_t>(slot) < m_header->capacity) {
             m_slotStatus[static_cast<size_t>(slot)].CompleteWFC();
         }
     }
 
     bool WaitForCompletion(int64_t slot, std::chrono::milliseconds timeout) noexcept {
-        if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) { return false; }
+        if (!m_header || !m_slotStatus || slot < 0 || 
+            static_cast<size_t>(slot) >= m_header->capacity) { return false; }
         
         size_t idx = static_cast<size_t>(slot);
         auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -430,7 +418,8 @@ public:
     }
 
     WFCState GetWFCState(int64_t slot) const noexcept {
-        if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) { return kWFCNone; }
+        if (!m_header || !m_slotStatus || slot < 0 || 
+            static_cast<size_t>(slot) >= m_header->capacity) { return kWFCNone; }
         return m_slotStatus[static_cast<size_t>(slot)].GetWFCState();
     }
 
@@ -439,25 +428,35 @@ public:
     // =========================================================================
 
     bool IsEmpty() const noexcept {
-        size_t tail = m_tail.value.load(std::memory_order_acquire);
-        size_t head = m_head.value.load(std::memory_order_acquire);
+        if (!m_header) { return true; }
+        size_t tail = m_header->tail.load(std::memory_order_acquire);
+        size_t head = m_header->head.load(std::memory_order_acquire);
         return tail >= head;
     }
 
     bool IsFull() const noexcept {
-        size_t tail = m_tail.value.load(std::memory_order_acquire);
-        size_t head = m_head.value.load(std::memory_order_acquire);
-        return head - tail >= m_capacity;
+        if (!m_header) { return false; }
+        size_t tail = m_header->tail.load(std::memory_order_acquire);
+        size_t head = m_header->head.load(std::memory_order_acquire);
+        return head - tail >= m_header->capacity;
     }
 
     size_t Size() const noexcept {
-        size_t tail = m_tail.value.load(std::memory_order_acquire);
-        size_t head = m_head.value.load(std::memory_order_acquire);
+        if (!m_header) { return 0; }
+        size_t tail = m_header->tail.load(std::memory_order_acquire);
+        size_t head = m_header->head.load(std::memory_order_acquire);
         return (head > tail) ? (head - tail) : 0;
     }
 
-    size_t Capacity() const noexcept { return m_capacity; }
-    ConsumerState GetConsumerState() const noexcept { return m_consumerState.value.load(std::memory_order_acquire); }
+    size_t Capacity() const noexcept { 
+        return m_header ? m_header->capacity : 0; 
+    }
+    
+    ConsumerState GetConsumerState() const noexcept { 
+        return m_header ? m_header->consumerState.load(std::memory_order_acquire) 
+                        : ConsumerState::Active; 
+    }
+
 
     // =========================================================================
     // Notification Mechanism / 通知机制
@@ -465,10 +464,11 @@ public:
 
 #ifdef __linux__
     int GetEventFD() const noexcept { return m_eventFd; }
+    void SetEventFD(int fd) noexcept { m_eventFd = fd; m_ownsEventFd = false; }
 #endif
 
     void NotifyConsumerIfWaiting() noexcept {
-        if (m_consumerState.value.load(std::memory_order_acquire) == ConsumerState::WaitingNotify) {
+        if (m_header && m_header->consumerState.load(std::memory_order_acquire) == ConsumerState::WaitingNotify) {
             DoNotify();
         }
     }
@@ -477,7 +477,9 @@ public:
 
     bool WaitForData(std::chrono::microseconds pollInterval,
                      std::chrono::milliseconds pollTimeout) noexcept {
-        m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+        if (!m_header) { return false; }
+        
+        m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
         
         // Phase 1: Poll
         auto pollEnd = std::chrono::steady_clock::now() + pollInterval;
@@ -489,47 +491,91 @@ public:
         if (!IsEmpty()) { return true; }
         
         // Phase 2: Enter waiting state
-        m_consumerState.value.store(ConsumerState::WaitingNotify, std::memory_order_release);
+        m_header->consumerState.store(ConsumerState::WaitingNotify, std::memory_order_release);
         
         // Double-check
         if (!IsEmpty()) {
-            m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+            m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
             return true;
         }
         
         // Phase 3: Wait
         bool hasData = DoWait(pollTimeout);
-        m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+        m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
         
         return hasData || !IsEmpty();
     }
 
 protected:
-    /**
-     * @brief Try to drop the oldest entry (only if it's not WFC)
-     * @brief 尝试丢弃最旧的条目（仅当它不是 WFC 时）
-     *
-     * @return true if an entry was dropped, false if oldest is WFC or queue is empty
-     */
+    // Protected constructor for derived classes
+    RingBufferBase() = default;
+    
+    // Initialize with external memory (for SharedRingBuffer)
+    void InitWithExternalMemory(RingBufferHeader* header, T* buffer, 
+                                SlotStatus* slotStatus, bool initHeader,
+                                size_t capacity, QueueFullPolicy policy) noexcept {
+        m_header = header;
+        m_buffer = buffer;
+        m_slotStatus = slotStatus;
+        
+        if (initHeader && m_header) {
+            m_header->Init(capacity, policy);
+        }
+        
+        if (initHeader && m_slotStatus) {
+            for (size_t i = 0; i < capacity; ++i) {
+                m_slotStatus[i].Reset();
+            }
+        }
+    }
+    
+    // Initialize notification mechanism
+    void InitNotification() noexcept {
+#ifdef __linux__
+        if (m_eventFd < 0) {
+            m_eventFd = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
+            m_ownsEventFd = true;
+        }
+#elif defined(__APPLE__)
+        if (m_semaphore == nullptr) {
+            m_semaphore = dispatch_semaphore_create(0);
+            m_ownsSemaphore = true;
+        }
+#endif
+    }
+    
+    void CleanupNotification() noexcept {
+#ifdef __linux__
+        if (m_ownsEventFd && m_eventFd >= 0) {
+            close(m_eventFd);
+            m_eventFd = -1;
+        }
+#elif defined(__APPLE__)
+        if (m_ownsSemaphore && m_semaphore != nullptr) {
+            m_semaphore = nullptr;
+        }
+#endif
+    }
+
     bool DropOldestEntry() noexcept {
-        size_t tail = m_tail.value.load(std::memory_order_relaxed);
-        size_t head = m_head.value.load(std::memory_order_acquire);
+        if (!m_header || !m_slotStatus) { return false; }
+        
+        size_t tail = m_header->tail.load(std::memory_order_relaxed);
+        size_t head = m_header->head.load(std::memory_order_acquire);
         
         if (tail >= head) { return false; }
         
-        size_t slot = tail % m_capacity;
+        size_t slot = tail % m_header->capacity;
         
-        // Don't drop WFC entries - they are NEVER dropped
-        // 不丢弃 WFC 条目 - 它们永远不会被丢弃
         if (m_slotStatus[slot].IsWFCEnabled()) { return false; }
         if (!m_slotStatus[slot].TryStartRead()) { return false; }
         
         m_slotStatus[slot].CompleteRead();
         
-        if (m_tail.value.compare_exchange_strong(tail, tail + 1,
-                                                  std::memory_order_acq_rel,
-                                                  std::memory_order_relaxed)) {
-            m_droppedCount.value.fetch_add(1, std::memory_order_relaxed);
+        if (m_header->tail.compare_exchange_strong(tail, tail + 1,
+                                                    std::memory_order_acq_rel,
+                                                    std::memory_order_relaxed)) {
+            m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
         return false;
@@ -578,20 +624,16 @@ protected:
     }
 
 protected:
-    CacheLineAligned<std::atomic<size_t>> m_head;
-    CacheLineAligned<std::atomic<size_t>> m_tail;
-    CacheLineAligned<std::atomic<ConsumerState>> m_consumerState;
-    CacheLineAligned<std::atomic<uint64_t>> m_droppedCount;
-    
-    size_t m_capacity;
-    QueueFullPolicy m_policy;
-    std::vector<T> m_buffer;
-    std::vector<SlotStatus> m_slotStatus;
+    RingBufferHeader* m_header{nullptr};
+    T* m_buffer{nullptr};
+    SlotStatus* m_slotStatus{nullptr};
 
 #ifdef __linux__
-    int m_eventFd;
+    int m_eventFd{-1};
+    bool m_ownsEventFd{false};
 #elif defined(__APPLE__)
-    dispatch_semaphore_t m_semaphore;
+    dispatch_semaphore_t m_semaphore{nullptr};
+    bool m_ownsSemaphore{false};
 #endif
 };
 
