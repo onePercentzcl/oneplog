@@ -297,15 +297,15 @@ xmake run benchmark
 
 | 测试项 | 吞吐量 | 平均延迟 | P99 延迟 |
 |--------|--------|----------|----------|
-| BinarySnapshot 捕获 | 2013 万 ops/sec | 27 ns | 42 ns |
-| HeapRingBuffer 入队/出队 | 2051 万 ops/sec | 30 ns | 125 ns |
-| 格式化 | 202 万 ops/sec | 461 ns | 667 ns |
-| 同步模式（单线程） | 214 万 ops/sec | 453 ns | 584 ns |
-| 异步模式（单线程） | 1516 万 ops/sec | 52 ns | 125 ns |
-| 异步模式（4线程） | 711 万 ops/sec | 535 ns | 1125 ns |
-| 异步 WFC 模式 | 1337 万 ops/sec | 62 ns | 209 ns |
-| 异步调用开销（单线程） | 1826 万 ops/sec | 41 ns | 84 ns |
-| 异步调用开销（4线程） | 931 万 ops/sec | 399 ns | 1041 ns |
+| BinarySnapshot 捕获 | 3475 万 ops/sec | 15 ns | 42 ns |
+| HeapRingBuffer 入队/出队 | 2662 万 ops/sec | 25 ns | 125 ns |
+| 格式化 | 277 万 ops/sec | 336 ns | 459 ns |
+| 同步模式（单线程） | 236 万 ops/sec | 411 ns | 583 ns |
+| 异步模式（单线程） | 1730 万 ops/sec | 44 ns | 84 ns |
+| 异步模式（4线程） | 974 万 ops/sec | 379 ns | 875 ns |
+| 异步 WFC 模式 | 1319 万 ops/sec | 47 ns | 84 ns |
+| 异步调用开销（单线程） | 1819 万 ops/sec | 42 ns | 166 ns |
+| 异步调用开销（4线程） | 828 万 ops/sec | 445 ns | 917 ns |
 
 运行性能测试：
 ```bash

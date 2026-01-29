@@ -297,15 +297,15 @@ Test results on Apple M4 Pro (14 cores) macOS:
 
 | Test | Throughput | Avg Latency | P99 Latency |
 |------|------------|-------------|-------------|
-| BinarySnapshot Capture | 20.1M ops/sec | 27 ns | 42 ns |
-| HeapRingBuffer Push/Pop | 20.5M ops/sec | 30 ns | 125 ns |
-| Format | 2.02M ops/sec | 461 ns | 667 ns |
-| Sync Mode (1 Thread) | 2.14M ops/sec | 453 ns | 584 ns |
-| Async Mode (1 Thread) | 15.2M ops/sec | 52 ns | 125 ns |
-| Async Mode (4 Threads) | 7.11M ops/sec | 535 ns | 1125 ns |
-| Async WFC Mode | 13.4M ops/sec | 62 ns | 209 ns |
-| Async Call Overhead (1 Thread) | 18.3M ops/sec | 41 ns | 84 ns |
-| Async Call Overhead (4 Threads) | 9.31M ops/sec | 399 ns | 1041 ns |
+| BinarySnapshot Capture | 34.8M ops/sec | 15 ns | 42 ns |
+| HeapRingBuffer Push/Pop | 26.6M ops/sec | 25 ns | 125 ns |
+| Format | 2.77M ops/sec | 336 ns | 459 ns |
+| Sync Mode (1 Thread) | 2.36M ops/sec | 411 ns | 583 ns |
+| Async Mode (1 Thread) | 17.3M ops/sec | 44 ns | 84 ns |
+| Async Mode (4 Threads) | 9.74M ops/sec | 379 ns | 875 ns |
+| Async WFC Mode | 13.2M ops/sec | 47 ns | 84 ns |
+| Async Call Overhead (1 Thread) | 18.2M ops/sec | 42 ns | 166 ns |
+| Async Call Overhead (4 Threads) | 8.28M ops/sec | 445 ns | 917 ns |
 
 Run performance benchmark:
 ```bash
