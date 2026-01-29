@@ -101,6 +101,7 @@ int main() {
 - [x] LogEntry 实现（SourceLocation、LogEntryDebug、LogEntryRelease）
 - [x] HeapRingBuffer 实现（无锁环形队列、WFC 支持、通知机制、队列满策略）
 - [x] SharedRingBuffer 实现（共享内存环形队列，继承自 RingBufferBase）
+- [x] SharedMemory 管理器（元数据、配置、进程/线程名称表）
 - [ ] Format 实现
 - [ ] Sink 实现
 - [ ] Logger 实现
