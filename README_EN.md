@@ -401,8 +401,8 @@ int main(int argc, char* argv[]) {
 |--------|-------------|---------|
 | `shared` | Build shared library | false |
 | `headeronly` | Header-only mode | false |
-| `tests` | Build tests | true |
-| `examples` | Build examples | true |
+| `tests` | Build tests | false |
+| `examples` | Build examples | false |
 | `use_fmt` | Use fmt library | true |
 
 ### CMake Options
@@ -411,9 +411,9 @@ int main(int argc, char* argv[]) {
 |--------|-------------|---------|
 | `ONEPLOG_BUILD_SHARED` | Build shared library | OFF |
 | `ONEPLOG_HEADER_ONLY` | Header-only mode | OFF |
-| `ONEPLOG_BUILD_TESTS` | Build tests | ON |
-| `ONEPLOG_BUILD_EXAMPLES` | Build examples | ON |
-| `ONEPLOG_USE_FMT` | Use fmt library | ON |
+| `ONEPLOG_BUILD_TESTS` | Build tests | OFF |
+| `ONEPLOG_BUILD_EXAMPLES` | Build examples | OFF |
+| `ONEPLOG_USE_FMT` | Use fmt library | OFF |
 
 ## Example Programs
 

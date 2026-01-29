@@ -12,8 +12,8 @@ set_xmakever("2.7.0")
 -- ==============================================================================
 option("shared", {default = false, description = "Build shared library / 构建动态库"})
 option("headeronly", {default = false, description = "Header-only mode / 仅头文件模式"})
-option("tests", {default = true, description = "Build tests / 构建测试"})
-option("examples", {default = true, description = "Build examples / 构建示例"})
+option("tests", {default = false, description = "Build tests / 构建测试"})
+option("examples", {default = false, description = "Build examples / 构建示例"})
 option("use_fmt", {default = true, description = "Use fmt library / 使用 fmt 库"})
 
 -- ==============================================================================

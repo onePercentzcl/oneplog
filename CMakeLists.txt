@@ -15,8 +15,8 @@ project(oneplog
 # ==============================================================================
 option(ONEPLOG_BUILD_SHARED "Build shared library / 构建动态库" OFF)
 option(ONEPLOG_HEADER_ONLY "Header-only mode / 仅头文件模式" OFF)
-option(ONEPLOG_BUILD_TESTS "Build tests / 构建测试" ON)
-option(ONEPLOG_BUILD_EXAMPLES "Build examples / 构建示例" ON)
+option(ONEPLOG_BUILD_TESTS "Build tests / 构建测试" OFF)
+option(ONEPLOG_BUILD_EXAMPLES "Build examples / 构建示例" OFF)
 option(ONEPLOG_USE_FMT "Use fmt library / 使用 fmt 库" OFF)
 
 # ==============================================================================

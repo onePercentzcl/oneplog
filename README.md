@@ -401,8 +401,8 @@ int main(int argc, char* argv[]) {
 |------|------|--------|
 | `shared` | 构建动态库 | false |
 | `headeronly` | 仅头文件模式 | false |
-| `tests` | 构建测试 | true |
-| `examples` | 构建示例 | true |
+| `tests` | 构建测试 | false |
+| `examples` | 构建示例 | false |
 | `use_fmt` | 使用 fmt 库 | true |
 
 ### CMake 选项
@@ -411,9 +411,9 @@ int main(int argc, char* argv[]) {
 |------|------|--------|
 | `ONEPLOG_BUILD_SHARED` | 构建动态库 | OFF |
 | `ONEPLOG_HEADER_ONLY` | 仅头文件模式 | OFF |
-| `ONEPLOG_BUILD_TESTS` | 构建测试 | ON |
-| `ONEPLOG_BUILD_EXAMPLES` | 构建示例 | ON |
-| `ONEPLOG_USE_FMT` | 使用 fmt 库 | ON |
+| `ONEPLOG_BUILD_TESTS` | 构建测试 | OFF |
+| `ONEPLOG_BUILD_EXAMPLES` | 构建示例 | OFF |
+| `ONEPLOG_USE_FMT` | 使用 fmt 库 | OFF |
 
 ## 示例程序
 
