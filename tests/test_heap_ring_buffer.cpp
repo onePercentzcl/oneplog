@@ -138,6 +138,126 @@ TEST(HeapRingBufferTest, QueueFullDropOldest) {
 }
 
 /**
+ * @brief Test WFC logs are NEVER dropped
+ * @brief 测试 WFC 日志永远不会被丢弃
+ */
+TEST(HeapRingBufferTest, WFCNeverDropped) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropNewest);
+    
+    // Fill the queue / 填满队列
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    std::atomic<bool> wfcCompleted{false};
+    std::atomic<int64_t> wfcSlot{-1};
+    
+    // Start a thread that will push WFC (should block, not drop)
+    // 启动一个将推入 WFC 的线程（应该阻塞，而不是丢弃）
+    std::thread producer([&]() {
+        int64_t slot = buffer.TryPushWFC(100);
+        wfcSlot.store(slot, std::memory_order_release);
+        wfcCompleted.store(true, std::memory_order_release);
+    });
+    
+    // Give producer time to start blocking / 给生产者时间开始阻塞
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_FALSE(wfcCompleted.load(std::memory_order_acquire));
+    
+    // Pop one item to unblock producer / 弹出一个元素以解除生产者阻塞
+    int value;
+    EXPECT_TRUE(buffer.TryPop(value));
+    
+    // Wait for producer to complete / 等待生产者完成
+    producer.join();
+    EXPECT_TRUE(wfcCompleted.load(std::memory_order_acquire));
+    
+    // WFC slot should be valid / WFC 槽位应该有效
+    EXPECT_NE(wfcSlot.load(std::memory_order_acquire), HeapRingBuffer<int>::kInvalidSlot);
+    
+    // No logs should be dropped (WFC never dropped)
+    // 不应该有日志被丢弃（WFC 永不丢弃）
+    EXPECT_EQ(buffer.GetDroppedCount(), 0);
+}
+
+/**
+ * @brief Test DropOldest blocks when oldest is WFC
+ * @brief 测试当最旧的是 WFC 时 DropOldest 会阻塞
+ */
+TEST(HeapRingBufferTest, DropOldestBlocksOnWFC) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropOldest);
+    
+    // Push first item as WFC / 第一个元素作为 WFC 推入
+    int64_t wfcSlot = buffer.TryPushWFC(0);
+    EXPECT_NE(wfcSlot, HeapRingBuffer<int>::kInvalidSlot);
+    
+    // Fill rest of queue / 填满队列的其余部分
+    for (int i = 1; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    std::atomic<bool> pushCompleted{false};
+    
+    // Start a thread that will block on push (oldest is WFC)
+    // 启动一个将在推入时阻塞的线程（最旧的是 WFC）
+    std::thread producer([&]() {
+        buffer.TryPush(100);  // This will block because oldest is WFC
+        pushCompleted.store(true, std::memory_order_release);
+    });
+    
+    // Give producer time to start blocking / 给生产者时间开始阻塞
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_FALSE(pushCompleted.load(std::memory_order_acquire));
+    
+    // Pop the WFC entry to unblock producer / 弹出 WFC 条目以解除生产者阻塞
+    int value;
+    EXPECT_TRUE(buffer.TryPop(value));
+    EXPECT_EQ(value, 0);  // WFC entry
+    
+    // Wait for producer to complete / 等待生产者完成
+    producer.join();
+    EXPECT_TRUE(pushCompleted.load(std::memory_order_acquire));
+    
+    // No logs should be dropped (blocked instead of dropping)
+    // 不应该有日志被丢弃（阻塞而不是丢弃）
+    EXPECT_EQ(buffer.GetDroppedCount(), 0);
+}
+
+/**
+ * @brief Test DropOldest drops non-WFC entries normally
+ * @brief 测试 DropOldest 正常丢弃非 WFC 条目
+ */
+TEST(HeapRingBufferTest, DropOldestDropsNonWFC) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropOldest);
+    
+    // Fill queue with non-WFC entries / 用非 WFC 条目填满队列
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    // Push when full - should drop oldest (0) and succeed
+    // 满时推入 - 应该丢弃最旧的（0）并成功
+    EXPECT_TRUE(buffer.TryPush(100));
+    EXPECT_EQ(buffer.GetDroppedCount(), 1);
+    
+    // Pop all and verify oldest was dropped
+    // 弹出所有并验证最旧的被丢弃
+    std::vector<int> values;
+    int value;
+    while (buffer.TryPop(value)) {
+        values.push_back(value);
+    }
+    
+    // Should have 1, 2, 3, 100 (0 was dropped)
+    EXPECT_EQ(values.size(), 4);
+    EXPECT_EQ(values[0], 1);
+    EXPECT_EQ(values[3], 100);
+}
+
+/**
  * @brief Test queue full condition with Block policy
  * @brief 测试队列满条件（Block 策略）
  */

@@ -99,7 +99,7 @@ int main() {
 - [x] 核心类型定义（Level、Mode、SlotState、ErrorCode）
 - [x] BinarySnapshot 实现
 - [x] LogEntry 实现（SourceLocation、LogEntryDebug、LogEntryRelease）
-- [x] HeapRingBuffer 实现（无锁环形队列、WFC 支持、通知机制）
+- [x] HeapRingBuffer 实现（无锁环形队列、WFC 支持、通知机制、队列满策略）
 - [ ] SharedRingBuffer 实现
 - [ ] Format 实现
 - [ ] Sink 实现
