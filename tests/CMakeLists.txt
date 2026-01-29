@@ -30,6 +30,8 @@ FetchContent_MakeAvailable(rapidcheck)
 set(TEST_SOURCES
     test_level.cpp
     test_binary_snapshot.cpp
+    test_log_entry.cpp
+    test_heap_ring_buffer.cpp
 )
 
 # ==============================================================================

@@ -80,7 +80,7 @@ int main() {
 - [x] Core type definitions (Level, Mode, SlotState, ErrorCode)
 - [x] BinarySnapshot implementation
 - [x] LogEntry implementation (SourceLocation, LogEntryDebug, LogEntryRelease)
-- [ ] HeapRingBuffer implementation
+- [x] HeapRingBuffer implementation (lock-free ring buffer, WFC support, notification mechanism)
 - [ ] SharedRingBuffer implementation
 - [ ] Format implementation
 - [ ] Sink implementation

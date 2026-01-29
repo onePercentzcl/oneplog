@@ -19,6 +19,10 @@
 
 namespace oneplog {
 
+// ==============================================================================
+// Cache Line Size Detection / 缓存行大小检测
+// ==============================================================================
+
 // Cache line size (compile-time detection) / 缓存行大小（编译时检测）
 // Use C++17 hardware_destructive_interference_size if available
 // 如果可用，使用 C++17 的 hardware_destructive_interference_size
@@ -29,6 +33,119 @@ constexpr size_t kCacheLineSize = std::hardware_destructive_interference_size;
 // 默认 64 字节（x86/x86_64/ARM 常见值）
 constexpr size_t kCacheLineSize = 64;
 #endif
+
+// ==============================================================================
+// CacheLineAligned Template / 缓存行对齐模板
+// ==============================================================================
+
+/**
+ * @brief Cache-line aligned wrapper to prevent false sharing
+ * @brief 缓存行对齐包装器，用于防止伪共享
+ *
+ * This template wraps a value and ensures it occupies its own cache line,
+ * preventing false sharing between threads accessing different variables.
+ * 此模板包装一个值并确保它占用自己的缓存行，防止访问不同变量的线程之间的伪共享。
+ *
+ * @tparam T The type to wrap / 要包装的类型
+ *
+ * Usage / 用法:
+ * @code
+ * CacheLineAligned<std::atomic<size_t>> head;
+ * head.value.store(0);
+ * @endcode
+ */
+template<typename T>
+struct alignas(kCacheLineSize) CacheLineAligned {
+    T value;  ///< The wrapped value / 包装的值
+
+    /**
+     * @brief Default constructor
+     * @brief 默认构造函数
+     */
+    CacheLineAligned() = default;
+
+    /**
+     * @brief Construct with value
+     * @brief 使用值构造
+     */
+    explicit CacheLineAligned(const T& v) : value(v) {}
+
+    /**
+     * @brief Construct with value (move)
+     * @brief 使用值构造（移动）
+     */
+    explicit CacheLineAligned(T&& v) : value(std::move(v)) {}
+
+    /**
+     * @brief Copy constructor
+     * @brief 拷贝构造函数
+     */
+    CacheLineAligned(const CacheLineAligned& other) : value(other.value) {}
+
+    /**
+     * @brief Move constructor
+     * @brief 移动构造函数
+     */
+    CacheLineAligned(CacheLineAligned&& other) noexcept : value(std::move(other.value)) {}
+
+    /**
+     * @brief Copy assignment
+     * @brief 拷贝赋值
+     */
+    CacheLineAligned& operator=(const CacheLineAligned& other) {
+        if (this != &other) {
+            value = other.value;
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Move assignment
+     * @brief 移动赋值
+     */
+    CacheLineAligned& operator=(CacheLineAligned&& other) noexcept {
+        if (this != &other) {
+            value = std::move(other.value);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Implicit conversion to reference
+     * @brief 隐式转换为引用
+     */
+    operator T&() noexcept { return value; }
+
+    /**
+     * @brief Implicit conversion to const reference
+     * @brief 隐式转换为常量引用
+     */
+    operator const T&() const noexcept { return value; }
+
+    /**
+     * @brief Arrow operator for pointer-like access
+     * @brief 箭头运算符，用于类似指针的访问
+     */
+    T* operator->() noexcept { return &value; }
+
+    /**
+     * @brief Arrow operator for pointer-like access (const)
+     * @brief 箭头运算符，用于类似指针的访问（常量）
+     */
+    const T* operator->() const noexcept { return &value; }
+
+private:
+    // Padding to ensure the struct occupies a full cache line
+    // 填充以确保结构体占用完整的缓存行
+    // Note: alignas already handles this, but we add explicit padding for clarity
+    // 注意：alignas 已经处理了这个问题，但我们添加显式填充以提高清晰度
+    static_assert(sizeof(T) <= kCacheLineSize, 
+                  "Type T is larger than cache line size");
+};
+
+// ==============================================================================
+// Slot State / 槽位状态
+// ==============================================================================
 
 /**
  * @brief Slot state enumeration for ring buffer

@@ -51,6 +51,7 @@ set(ONEPLOG_HEADERS
 
 set(ONEPLOG_SOURCES
     src/common.cpp
+    src/heap_ring_buffer.cpp
 )
 
 # ==============================================================================

@@ -1,0 +1,439 @@
+/**
+ * @file test_heap_ring_buffer.cpp
+ * @brief Unit tests for HeapRingBuffer
+ * @brief HeapRingBuffer 的单元测试
+ *
+ * @copyright Copyright (c) 2024 onePlog
+ */
+
+#include <gtest/gtest.h>
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+#endif
+
+#include <atomic>
+#include <thread>
+#include <vector>
+
+#include <oneplog/heap_ring_buffer.hpp>
+#include <oneplog/log_entry.hpp>
+
+namespace oneplog {
+namespace test {
+
+// ==============================================================================
+// Unit Tests / 单元测试
+// ==============================================================================
+
+/**
+ * @brief Test default constructor
+ * @brief 测试默认构造函数
+ */
+TEST(HeapRingBufferTest, Constructor) {
+    HeapRingBuffer<int> buffer(16);
+    EXPECT_EQ(buffer.Capacity(), 16);
+    EXPECT_TRUE(buffer.IsEmpty());
+    EXPECT_FALSE(buffer.IsFull());
+    EXPECT_EQ(buffer.Size(), 0);
+}
+
+/**
+ * @brief Test basic push and pop
+ * @brief 测试基本的推入和弹出
+ */
+TEST(HeapRingBufferTest, BasicPushPop) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Push / 推入
+    EXPECT_TRUE(buffer.TryPush(42));
+    EXPECT_FALSE(buffer.IsEmpty());
+    EXPECT_EQ(buffer.Size(), 1);
+    
+    // Pop / 弹出
+    int value = 0;
+    EXPECT_TRUE(buffer.TryPop(value));
+    EXPECT_EQ(value, 42);
+    EXPECT_TRUE(buffer.IsEmpty());
+    EXPECT_EQ(buffer.Size(), 0);
+}
+
+/**
+ * @brief Test multiple push and pop
+ * @brief 测试多次推入和弹出
+ */
+TEST(HeapRingBufferTest, MultiplePushPop) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Push multiple items / 推入多个元素
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_EQ(buffer.Size(), 10);
+    
+    // Pop and verify order / 弹出并验证顺序
+    for (int i = 0; i < 10; ++i) {
+        int value = -1;
+        EXPECT_TRUE(buffer.TryPop(value));
+        EXPECT_EQ(value, i);
+    }
+    EXPECT_TRUE(buffer.IsEmpty());
+}
+
+/**
+ * @brief Test queue full condition
+ * @brief 测试队列满条件
+ */
+TEST(HeapRingBufferTest, QueueFull) {
+    HeapRingBuffer<int> buffer(4);
+    
+    // Fill the queue / 填满队列
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    // Try to push when full / 满时尝试推入
+    EXPECT_FALSE(buffer.TryPush(100));
+    
+    // Pop one and push again / 弹出一个再推入
+    int value;
+    EXPECT_TRUE(buffer.TryPop(value));
+    EXPECT_TRUE(buffer.TryPush(100));
+}
+
+/**
+ * @brief Test queue empty condition
+ * @brief 测试队列空条件
+ */
+TEST(HeapRingBufferTest, QueueEmpty) {
+    HeapRingBuffer<int> buffer(4);
+    
+    // Try to pop from empty queue / 从空队列弹出
+    int value = -1;
+    EXPECT_FALSE(buffer.TryPop(value));
+    EXPECT_EQ(value, -1);  // Value should be unchanged / 值应该不变
+}
+
+/**
+ * @brief Test AcquireSlot and CommitSlot
+ * @brief 测试 AcquireSlot 和 CommitSlot
+ */
+TEST(HeapRingBufferTest, AcquireAndCommitSlot) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Acquire slot / 获取槽位
+    int64_t slot = buffer.AcquireSlot();
+    EXPECT_NE(slot, HeapRingBuffer<int>::kInvalidSlot);
+    
+    // Commit data / 提交数据
+    buffer.CommitSlot(slot, 42);
+    buffer.NotifyConsumer();
+    
+    // Pop and verify / 弹出并验证
+    int value = 0;
+    EXPECT_TRUE(buffer.TryPop(value));
+    EXPECT_EQ(value, 42);
+}
+
+/**
+ * @brief Test TryPushWFC
+ * @brief 测试 TryPushWFC
+ */
+TEST(HeapRingBufferTest, TryPushWFC) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Push with WFC / 带 WFC 推入
+    int64_t slot = buffer.TryPushWFC(42);
+    EXPECT_NE(slot, HeapRingBuffer<int>::kInvalidSlot);
+    
+    // Check WFC state / 检查 WFC 状态
+    EXPECT_EQ(buffer.GetWFCState(slot), kWFCEnabled);
+    
+    // Pop (this should complete WFC) / 弹出（这应该完成 WFC）
+    int value = 0;
+    EXPECT_TRUE(buffer.TryPop(value));
+    EXPECT_EQ(value, 42);
+    
+    // WFC should be completed / WFC 应该完成
+    EXPECT_EQ(buffer.GetWFCState(slot), kWFCCompleted);
+}
+
+/**
+ * @brief Test WaitForCompletion
+ * @brief 测试 WaitForCompletion
+ */
+TEST(HeapRingBufferTest, WaitForCompletion) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Push with WFC / 带 WFC 推入
+    int64_t slot = buffer.TryPushWFC(42);
+    EXPECT_NE(slot, HeapRingBuffer<int>::kInvalidSlot);
+    
+    // Start consumer thread / 启动消费者线程
+    std::thread consumer([&buffer]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        int value;
+        buffer.TryPop(value);
+    });
+    
+    // Wait for completion / 等待完成
+    bool completed = buffer.WaitForCompletion(slot, std::chrono::milliseconds(1000));
+    EXPECT_TRUE(completed);
+    
+    consumer.join();
+}
+
+/**
+ * @brief Test TryPopBatch
+ * @brief 测试 TryPopBatch
+ */
+TEST(HeapRingBufferTest, TryPopBatch) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Push multiple items / 推入多个元素
+    for (int i = 0; i < 10; ++i) {
+        buffer.TryPush(i);
+    }
+    
+    // Pop batch / 批量弹出
+    std::vector<int> items;
+    size_t count = buffer.TryPopBatch(items, 5);
+    EXPECT_EQ(count, 5);
+    EXPECT_EQ(items.size(), 5);
+    
+    // Verify order / 验证顺序
+    for (size_t i = 0; i < items.size(); ++i) {
+        EXPECT_EQ(items[i], static_cast<int>(i));
+    }
+    
+    // Remaining items / 剩余元素
+    EXPECT_EQ(buffer.Size(), 5);
+}
+
+/**
+ * @brief Test with LogEntry type
+ * @brief 测试 LogEntry 类型
+ */
+TEST(HeapRingBufferTest, WithLogEntry) {
+    HeapRingBuffer<LogEntry> buffer(16);
+    
+    // Create and push LogEntry / 创建并推入 LogEntry
+    LogEntry entry;
+    entry.timestamp = 12345;
+    entry.level = Level::Info;
+    entry.threadId = 1;
+    entry.processId = 100;
+    
+    EXPECT_TRUE(buffer.TryPush(std::move(entry)));
+    EXPECT_EQ(buffer.Size(), 1);
+    
+    // Pop and verify / 弹出并验证
+    LogEntry popped;
+    EXPECT_TRUE(buffer.TryPop(popped));
+    EXPECT_EQ(popped.timestamp, 12345);
+    EXPECT_EQ(popped.level, Level::Info);
+    EXPECT_EQ(popped.threadId, 1);
+    EXPECT_EQ(popped.processId, 100);
+}
+
+/**
+ * @brief Test wrap-around behavior
+ * @brief 测试环绕行为
+ */
+TEST(HeapRingBufferTest, WrapAround) {
+    HeapRingBuffer<int> buffer(4);
+    
+    // Fill and empty multiple times to test wrap-around
+    // 多次填充和清空以测试环绕
+    for (int round = 0; round < 3; ++round) {
+        // Fill / 填充
+        for (int i = 0; i < 4; ++i) {
+            EXPECT_TRUE(buffer.TryPush(round * 10 + i));
+        }
+        EXPECT_TRUE(buffer.IsFull());
+        
+        // Empty / 清空
+        for (int i = 0; i < 4; ++i) {
+            int value;
+            EXPECT_TRUE(buffer.TryPop(value));
+            EXPECT_EQ(value, round * 10 + i);
+        }
+        EXPECT_TRUE(buffer.IsEmpty());
+    }
+}
+
+/**
+ * @brief Test concurrent push from multiple threads
+ * @brief 测试多线程并发推入
+ */
+TEST(HeapRingBufferTest, ConcurrentPush) {
+    HeapRingBuffer<int> buffer(1024);
+    std::atomic<int> pushCount{0};
+    const int numThreads = 4;
+    const int itemsPerThread = 100;
+    
+    std::vector<std::thread> threads;
+    for (int t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&buffer, &pushCount, t]() {
+            for (int i = 0; i < 100; ++i) {
+                if (buffer.TryPush(t * 1000 + i)) {
+                    pushCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+    
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    
+    // All items should be pushed / 所有元素应该被推入
+    EXPECT_EQ(pushCount.load(), numThreads * itemsPerThread);
+    EXPECT_EQ(buffer.Size(), static_cast<size_t>(numThreads * itemsPerThread));
+}
+
+/**
+ * @brief Test concurrent push and pop
+ * @brief 测试并发推入和弹出
+ */
+TEST(HeapRingBufferTest, ConcurrentPushPop) {
+    HeapRingBuffer<int> buffer(256);
+    std::atomic<int> pushCount{0};
+    std::atomic<int> popCount{0};
+    std::atomic<bool> done{false};
+    const int totalItems = 1000;
+    
+    // Producer thread / 生产者线程
+    std::thread producer([&]() {
+        for (int i = 0; i < totalItems; ++i) {
+            while (!buffer.TryPush(i)) {
+                std::this_thread::yield();
+            }
+            pushCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        done.store(true, std::memory_order_release);
+    });
+    
+    // Consumer thread / 消费者线程
+    std::thread consumer([&]() {
+        int value;
+        while (!done.load(std::memory_order_acquire) || !buffer.IsEmpty()) {
+            if (buffer.TryPop(value)) {
+                popCount.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+    });
+    
+    producer.join();
+    consumer.join();
+    
+    // All items should be processed / 所有元素应该被处理
+    EXPECT_EQ(pushCount.load(), totalItems);
+    EXPECT_EQ(popCount.load(), totalItems);
+    EXPECT_TRUE(buffer.IsEmpty());
+}
+
+// ==============================================================================
+// Property-Based Tests / 属性测试
+// ==============================================================================
+
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+
+/**
+ * @brief Property 6: HeapRingBuffer FIFO order guarantee
+ * @brief 属性 6：HeapRingBuffer FIFO 顺序保证
+ *
+ * For any sequence of enqueued elements [e1, e2, ..., eN], the dequeue order
+ * should maintain FIFO order, i.e., elements enqueued first are dequeued first.
+ *
+ * 对于任意入队元素序列 [e1, e2, ..., eN]，出队顺序应该保持 FIFO 顺序，
+ * 即先入队的元素先出队。
+ *
+ * **Validates: Requirements 7.8**
+ */
+RC_GTEST_PROP(HeapRingBufferPropertyTest, FIFOOrderGuarantee, ()) {
+    // Generate random capacity (power of 2 for efficiency)
+    // 生成随机容量（2 的幂以提高效率）
+    auto capacityExp = *rc::gen::inRange(2, 8);  // 4 to 128
+    size_t capacity = 1 << capacityExp;
+    
+    HeapRingBuffer<int> buffer(capacity);
+    
+    // Generate random number of items to push (up to capacity)
+    // 生成随机数量的元素（最多到容量）
+    auto itemCount = *rc::gen::inRange(0, static_cast<int>(capacity));
+    
+    // Push items / 推入元素
+    std::vector<int> pushed;
+    for (int i = 0; i < itemCount; ++i) {
+        auto value = *rc::gen::arbitrary<int>();
+        if (buffer.TryPush(value)) {
+            pushed.push_back(value);
+        }
+    }
+    
+    // Pop items and verify FIFO order / 弹出元素并验证 FIFO 顺序
+    std::vector<int> popped;
+    int value;
+    while (buffer.TryPop(value)) {
+        popped.push_back(value);
+    }
+    
+    // Verify FIFO order / 验证 FIFO 顺序
+    RC_ASSERT(pushed == popped);
+}
+
+/**
+ * @brief Property: Size is always consistent
+ * @brief 属性：大小始终一致
+ */
+RC_GTEST_PROP(HeapRingBufferPropertyTest, SizeConsistency, ()) {
+    auto capacity = *rc::gen::inRange(4, 64);
+    HeapRingBuffer<int> buffer(static_cast<size_t>(capacity));
+    
+    auto pushCount = *rc::gen::inRange(0, capacity);
+    auto popCount = *rc::gen::inRange(0, pushCount);
+    
+    // Push items / 推入元素
+    for (int i = 0; i < pushCount; ++i) {
+        buffer.TryPush(i);
+    }
+    RC_ASSERT(buffer.Size() == static_cast<size_t>(pushCount));
+    
+    // Pop items / 弹出元素
+    int value;
+    for (int i = 0; i < popCount; ++i) {
+        buffer.TryPop(value);
+    }
+    RC_ASSERT(buffer.Size() == static_cast<size_t>(pushCount - popCount));
+}
+
+/**
+ * @brief Property: Never exceeds capacity
+ * @brief 属性：永远不超过容量
+ */
+RC_GTEST_PROP(HeapRingBufferPropertyTest, NeverExceedsCapacity, ()) {
+    auto capacity = *rc::gen::inRange(4, 64);
+    HeapRingBuffer<int> buffer(static_cast<size_t>(capacity));
+    
+    // Try to push more than capacity / 尝试推入超过容量的元素
+    int successCount = 0;
+    for (int i = 0; i < capacity * 2; ++i) {
+        if (buffer.TryPush(i)) {
+            ++successCount;
+        }
+    }
+    
+    // Should only succeed up to capacity / 应该只成功到容量
+    RC_ASSERT(successCount == capacity);
+    RC_ASSERT(buffer.Size() == static_cast<size_t>(capacity));
+    RC_ASSERT(buffer.IsFull());
+}
+
+#endif  // ONEPLOG_HAS_RAPIDCHECK
+
+}  // namespace test
+}  // namespace oneplog
