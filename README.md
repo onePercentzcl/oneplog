@@ -42,7 +42,7 @@ target("your_target")
 include(FetchContent)
 FetchContent_Declare(oneplog
     GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
-    GIT_TAG v0.1.0)
+    GIT_TAG v0.1.1)
 FetchContent_MakeAvailable(oneplog)
 target_link_libraries(your_target PRIVATE oneplog)
 ```
