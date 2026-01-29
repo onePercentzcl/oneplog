@@ -58,15 +58,21 @@ set(ONEPLOG_HEADERS
 )
 
 set(ONEPLOG_SOURCES
-    src/common.cpp
-    src/heap_ring_buffer.cpp
-    src/log_entry.cpp
-    src/shared_ring_buffer.cpp
-    src/format.cpp
-    src/sink.cpp
-    src/pipeline_thread.cpp
-    src/writer_thread.cpp
-    src/logger.cpp
+    src/oneplog/common.cpp
+    src/oneplog/heap_ring_buffer.cpp
+    src/oneplog/log_entry.cpp
+    src/oneplog/shared_ring_buffer.cpp
+    src/oneplog/format.cpp
+    src/oneplog/sink.cpp
+    src/oneplog/pipeline_thread.cpp
+    src/oneplog/writer_thread.cpp
+    src/oneplog/logger.cpp
+    src/oneplog/memory_pool.cpp
+)
+
+set(FMT_SOURCES
+    src/fmt/format.cc
+    src/fmt/os.cc
 )
 
 # ==============================================================================
