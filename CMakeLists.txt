@@ -47,11 +47,16 @@ set(ONEPLOG_HEADERS
     include/oneplog/common.hpp
     include/oneplog/ring_buffer.hpp
     include/oneplog/binary_snapshot.hpp
+    include/oneplog/log_entry.hpp
+    include/oneplog/format.hpp
 )
 
 set(ONEPLOG_SOURCES
     src/common.cpp
     src/heap_ring_buffer.cpp
+    src/log_entry.cpp
+    src/shared_ring_buffer.cpp
+    src/format.cpp
 )
 
 # ==============================================================================
