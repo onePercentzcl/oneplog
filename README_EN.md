@@ -87,7 +87,11 @@ int main() {
 - [x] Sink implementation (ConsoleSink, FileSink, NetworkSink)
 - [x] PipelineThread implementation (multi-process mode pipeline thread)
 - [x] WriterThread implementation (log output thread)
-- [ ] Logger implementation
+- [x] Logger implementation (Sync/Async/MProc modes, WFC support)
+- [x] Global API (DefaultLogger, convenience functions, process/module names)
+- [x] Macros (ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL, WFC, conditional logging, compile-time disable)
+- [ ] MemoryPool implementation
+- [ ] Example code
 
 ## License
 

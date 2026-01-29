@@ -52,6 +52,9 @@ set(ONEPLOG_HEADERS
     include/oneplog/sink.hpp
     include/oneplog/pipeline_thread.hpp
     include/oneplog/writer_thread.hpp
+    include/oneplog/logger.hpp
+    include/oneplog/macros.hpp
+    include/oneplog/oneplog.hpp
 )
 
 set(ONEPLOG_SOURCES
@@ -63,6 +66,7 @@ set(ONEPLOG_SOURCES
     src/sink.cpp
     src/pipeline_thread.cpp
     src/writer_thread.cpp
+    src/logger.cpp
 )
 
 # ==============================================================================
