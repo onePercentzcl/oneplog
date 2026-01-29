@@ -295,23 +295,37 @@ xmake run benchmark
 
 Test results on Apple M4 Pro (14 cores) macOS:
 
+### Component Performance
+
 | Test | Throughput | Avg Latency | P99 Latency |
 |------|------------|-------------|-------------|
 | BinarySnapshot Capture | 34.8M ops/sec | 15 ns | 42 ns |
 | HeapRingBuffer Push/Pop | 26.6M ops/sec | 25 ns | 125 ns |
 | Format | 2.77M ops/sec | 336 ns | 459 ns |
-| Sync Mode (1 Thread) | 2.36M ops/sec | 411 ns | 583 ns |
-| Async Mode (1 Thread) | 17.3M ops/sec | 44 ns | 84 ns |
-| Async Mode (4 Threads) | 9.74M ops/sec | 379 ns | 875 ns |
-| Async WFC Mode | 13.2M ops/sec | 47 ns | 84 ns |
-| Async Call Overhead (1 Thread) | 18.2M ops/sec | 42 ns | 166 ns |
-| Async Call Overhead (4 Threads) | 8.28M ops/sec | 445 ns | 917 ns |
+
+### Comparison with spdlog
+
+Fair comparison using the same output format (message only):
+
+| Test | onePlog | spdlog | Comparison |
+|------|---------|--------|------------|
+| Sync Mode (Null Sink) | 14.7M ops/sec | 15.9M ops/sec | -7.5% |
+| Async Mode (1 Thread) | 9.7M ops/sec | 4.6M ops/sec | +111% |
+| Async Mode (4 Threads) | 7.5M ops/sec | 3.1M ops/sec | +147% |
+| Sync File Output | 9.9M ops/sec | 9.3M ops/sec | +7% |
+| Async File Output | 14.1M ops/sec | 4.9M ops/sec | +188% |
+| Async File (4 Threads) | 8.2M ops/sec | 3.3M ops/sec | +150% |
+
+**Key Optimizations**:
+- Sync mode uses `fmt::memory_buffer` stack buffer for zero heap allocation
+- Async mode uses lock-free ring buffer for excellent high-concurrency performance
+- Formatters fetch metadata (thread ID, process ID, etc.) on demand
 
 Run performance benchmark:
 ```bash
 xmake f -m release
-xmake -r benchmark
-./build/macosx/arm64/release/benchmark
+xmake -r benchmark_compare
+./build/macosx/arm64/release/benchmark_compare -i 500000
 ```
 
 ## Development Progress

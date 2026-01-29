@@ -295,23 +295,37 @@ xmake run benchmark
 
 在 Apple M4 Pro (14 核) macOS 上的测试结果：
 
+### 组件性能
+
 | 测试项 | 吞吐量 | 平均延迟 | P99 延迟 |
 |--------|--------|----------|----------|
 | BinarySnapshot 捕获 | 3475 万 ops/sec | 15 ns | 42 ns |
 | HeapRingBuffer 入队/出队 | 2662 万 ops/sec | 25 ns | 125 ns |
 | 格式化 | 277 万 ops/sec | 336 ns | 459 ns |
-| 同步模式（单线程） | 236 万 ops/sec | 411 ns | 583 ns |
-| 异步模式（单线程） | 1730 万 ops/sec | 44 ns | 84 ns |
-| 异步模式（4线程） | 974 万 ops/sec | 379 ns | 875 ns |
-| 异步 WFC 模式 | 1319 万 ops/sec | 47 ns | 84 ns |
-| 异步调用开销（单线程） | 1819 万 ops/sec | 42 ns | 166 ns |
-| 异步调用开销（4线程） | 828 万 ops/sec | 445 ns | 917 ns |
+
+### 与 spdlog 性能对比
+
+使用相同输出格式（仅消息）进行公平对比：
+
+| 测试项 | onePlog | spdlog | 对比 |
+|--------|---------|--------|------|
+| 同步模式（Null Sink） | 1469 万 ops/sec | 1588 万 ops/sec | -7.5% |
+| 异步模式（单线程） | 966 万 ops/sec | 458 万 ops/sec | +111% |
+| 异步模式（4线程） | 753 万 ops/sec | 305 万 ops/sec | +147% |
+| 同步文件输出 | 990 万 ops/sec | 925 万 ops/sec | +7% |
+| 异步文件输出 | 1409 万 ops/sec | 490 万 ops/sec | +188% |
+| 异步文件（4线程） | 822 万 ops/sec | 329 万 ops/sec | +150% |
+
+**关键优化**：
+- 同步模式使用 `fmt::memory_buffer` 栈缓冲区，实现零堆分配
+- 异步模式使用无锁环形队列，高并发场景性能优异
+- 格式化器按需获取元数据（线程ID、进程ID等）
 
 运行性能测试：
 ```bash
 xmake f -m release
-xmake -r benchmark
-./build/macosx/arm64/release/benchmark
+xmake -r benchmark_compare
+./build/macosx/arm64/release/benchmark_compare -i 500000
 ```
 
 ## 开发进度

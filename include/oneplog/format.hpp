@@ -16,6 +16,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef ONEPLOG_USE_FMT
@@ -62,6 +63,22 @@ inline const char* GetLevelColor(Level level) {
 }
 
 // ==============================================================================
+// Format Requirements / 格式化需求标志
+// ==============================================================================
+
+/**
+ * @brief Flags indicating what metadata the formatter needs
+ * @brief 指示格式化器需要哪些元数据的标志
+ */
+struct FormatRequirements {
+    bool needsTimestamp = true;      ///< Needs timestamp / 需要时间戳
+    bool needsLevel = true;          ///< Needs log level / 需要日志级别
+    bool needsThreadId = false;      ///< Needs thread ID / 需要线程 ID
+    bool needsProcessId = false;     ///< Needs process ID / 需要进程 ID
+    bool needsSourceLocation = false; ///< Needs file/line/function / 需要文件/行号/函数名
+};
+
+// ==============================================================================
 // Format Base Class / 格式化器基类
 // ==============================================================================
 
@@ -80,6 +97,67 @@ public:
     virtual std::string FormatEntry(const LogEntry& entry) = 0;
 
     /**
+     * @brief Direct format without LogEntry (for sync mode optimization)
+     * @brief 直接格式化，不使用 LogEntry（用于同步模式优化）
+     *
+     * @param level Log level / 日志级别
+     * @param timestamp Nanosecond timestamp / 纳秒时间戳
+     * @param threadId Thread ID (0 if not needed) / 线程 ID（不需要时为 0）
+     * @param processId Process ID (0 if not needed) / 进程 ID（不需要时为 0）
+     * @param message Formatted message / 格式化后的消息
+     * @return Formatted log string / 格式化后的日志字符串
+     */
+    virtual std::string FormatDirect(Level level, uint64_t timestamp,
+                                     uint32_t threadId, uint32_t processId,
+                                     const std::string& message) {
+        // Default implementation creates a temporary LogEntry
+        // 默认实现创建临时 LogEntry
+        LogEntry entry;
+        entry.level = level;
+        entry.timestamp = timestamp;
+        entry.threadId = threadId;
+        entry.processId = processId;
+        entry.snapshot.CaptureStringView(message);
+        return FormatEntry(entry);
+    }
+
+#ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Direct format to buffer without heap allocation (zero-copy)
+     * @brief 直接格式化到缓冲区，无堆分配（零拷贝）
+     *
+     * @param buffer Output buffer (fmt::memory_buffer) / 输出缓冲区
+     * @param level Log level / 日志级别
+     * @param timestamp Nanosecond timestamp / 纳秒时间戳
+     * @param threadId Thread ID (0 if not needed) / 线程 ID（不需要时为 0）
+     * @param processId Process ID (0 if not needed) / 进程 ID（不需要时为 0）
+     * @param message Formatted message / 格式化后的消息
+     */
+    virtual void FormatDirectToBuffer(fmt::memory_buffer& buffer,
+                                      Level /*level*/, uint64_t /*timestamp*/,
+                                      uint32_t /*threadId*/, uint32_t /*processId*/,
+                                      std::string_view message) {
+        // Default implementation: just append message
+        // 默认实现：仅追加消息
+        buffer.append(message);
+    }
+#endif
+
+    /**
+     * @brief Get format requirements
+     * @brief 获取格式化需求
+     */
+    virtual FormatRequirements GetRequirements() const {
+        FormatRequirements req;
+        req.needsTimestamp = true;
+        req.needsLevel = true;
+        req.needsThreadId = true;
+        req.needsProcessId = true;
+        req.needsSourceLocation = true;
+        return req;
+    }
+
+    /**
      * @brief Convert log level to string representation
      * @brief 将日志级别转换为字符串表示
      */
@@ -93,6 +171,8 @@ public:
 
     void SetProcessName(const std::string& name) { m_processName = PadOrTruncate(name, 6); }
     void SetModuleName(const std::string& name) { m_moduleName = PadOrTruncate(name, 6); }
+    const std::string& GetProcessName() const { return m_processName; }
+    const std::string& GetModuleName() const { return m_moduleName; }
 
 protected:
     /**
@@ -188,6 +268,41 @@ protected:
 #endif
     }
 
+    /**
+     * @brief Format timestamp to stack buffer (milliseconds precision)
+     * @brief 格式化时间戳到栈缓冲区（毫秒精度）
+     */
+    static size_t FormatTimestampMsToBuffer(uint64_t timestamp, char* buf, size_t bufSize) {
+        auto seconds = static_cast<time_t>(timestamp / 1000000000ULL);
+        auto millis = static_cast<uint32_t>((timestamp % 1000000000ULL) / 1000000);
+
+        std::tm tm_time{};
+#ifdef _WIN32
+        localtime_s(&tm_time, &seconds);
+#else
+        localtime_r(&seconds, &tm_time);
+#endif
+        return static_cast<size_t>(std::snprintf(buf, bufSize, "%02d:%02d:%02d:%03d",
+            tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec, millis));
+    }
+
+    /**
+     * @brief Format timestamp to stack buffer (seconds precision)
+     * @brief 格式化时间戳到栈缓冲区（秒精度）
+     */
+    static size_t FormatTimestampSecToBuffer(uint64_t timestamp, char* buf, size_t bufSize) {
+        auto seconds = static_cast<time_t>(timestamp / 1000000000ULL);
+
+        std::tm tm_time{};
+#ifdef _WIN32
+        localtime_s(&tm_time, &seconds);
+#else
+        localtime_r(&seconds, &tm_time);
+#endif
+        return static_cast<size_t>(std::snprintf(buf, bufSize, "%02d:%02d:%02d",
+            tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec));
+    }
+
     std::vector<std::shared_ptr<Sink>> m_sinks;
     std::string m_processName = " main ";  // Default 6 chars centered
     std::string m_moduleName = " main ";   // Default 6 chars centered
@@ -215,6 +330,63 @@ public:
 #else
         return FormatDebug(entry);
 #endif
+    }
+
+    /**
+     * @brief Direct format for sync mode optimization
+     * @brief 同步模式优化的直接格式化
+     */
+    std::string FormatDirect(Level level, uint64_t timestamp,
+                             uint32_t threadId, uint32_t processId,
+                             const std::string& message) override {
+#ifdef NDEBUG
+        (void)threadId;
+        (void)processId;
+        return FormatReleaseDirect(level, timestamp, message);
+#else
+        return FormatDebugDirect(level, timestamp, threadId, processId, message);
+#endif
+    }
+
+#ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Direct format to buffer (zero heap allocation)
+     * @brief 直接格式化到缓冲区（零堆分配）
+     */
+    void FormatDirectToBuffer(fmt::memory_buffer& buffer,
+                              Level level, uint64_t timestamp,
+                              uint32_t threadId, uint32_t processId,
+                              std::string_view message) override {
+#ifdef NDEBUG
+        (void)threadId;
+        (void)processId;
+        FormatReleaseToBuffer(buffer, level, timestamp, message);
+#else
+        FormatDebugToBuffer(buffer, level, timestamp, threadId, processId, message);
+#endif
+    }
+#endif
+
+    /**
+     * @brief Get format requirements
+     * @brief 获取格式化需求
+     */
+    FormatRequirements GetRequirements() const override {
+        FormatRequirements req;
+        req.needsTimestamp = true;
+        req.needsLevel = true;
+#ifdef NDEBUG
+        // Release mode doesn't need thread/process ID
+        req.needsThreadId = false;
+        req.needsProcessId = false;
+        req.needsSourceLocation = false;
+#else
+        // Debug mode needs thread/process ID
+        req.needsThreadId = true;
+        req.needsProcessId = true;
+        req.needsSourceLocation = false;
+#endif
+        return req;
     }
 
     void SetColorEnabled(bool enabled) { m_colorEnabled = enabled; }
@@ -265,6 +437,78 @@ private:
     }
 
     /**
+     * @brief Debug mode direct format (no LogEntry)
+     * @brief Debug 模式直接格式化（无 LogEntry）
+     */
+    std::string FormatDebugDirect(Level level, uint64_t timestamp,
+                                  uint32_t threadId, uint32_t processId,
+                                  const std::string& message) {
+        const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
+        const char* reset = m_colorEnabled ? color::kReset : "";
+
+#ifdef ONEPLOG_USE_FMT
+        return fmt::format("[{}] {}[{}]{} [{}:{}] [{}:{}] {}",
+            FormatTimestampMs(timestamp),
+            levelColor,
+            LevelToString(level, LevelNameStyle::Short4),
+            reset,
+            m_processName, processId,
+            m_moduleName, threadId,
+            message);
+#else
+        std::string result;
+        result.reserve(256);
+        result += "[";
+        result += FormatTimestampMs(timestamp);
+        result += "] ";
+        result += levelColor;
+        result += "[";
+        result += LevelToString(level, LevelNameStyle::Short4);
+        result += "]";
+        result += reset;
+        result += " [";
+        result += m_processName;
+        result += ":";
+        result += std::to_string(processId);
+        result += "] [";
+        result += m_moduleName;
+        result += ":";
+        result += std::to_string(threadId);
+        result += "] ";
+        result += message;
+        return result;
+#endif
+    }
+
+#ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Debug mode format to buffer (zero heap allocation)
+     * @brief Debug 模式格式化到缓冲区（零堆分配）
+     */
+    void FormatDebugToBuffer(fmt::memory_buffer& buffer,
+                             Level level, uint64_t timestamp,
+                             uint32_t threadId, uint32_t processId,
+                             std::string_view message) {
+        const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
+        const char* reset = m_colorEnabled ? color::kReset : "";
+
+        // Format timestamp to stack buffer
+        char timeBuf[16];
+        FormatTimestampMsToBuffer(timestamp, timeBuf, sizeof(timeBuf));
+
+        fmt::format_to(std::back_inserter(buffer),
+            "[{}] {}[{}]{} [{}:{}] [{}:{}] {}",
+            timeBuf,
+            levelColor,
+            LevelToString(level, LevelNameStyle::Short4),
+            reset,
+            m_processName, processId,
+            m_moduleName, threadId,
+            message);
+    }
+#endif
+
+    /**
      * @brief Release mode format with colors
      * @brief Release 模式格式（带颜色）
      * [15:20:23] [INFO] [进程名] [模块名] 消息
@@ -302,6 +546,72 @@ private:
         return result;
 #endif
     }
+
+    /**
+     * @brief Release mode direct format (no LogEntry)
+     * @brief Release 模式直接格式化（无 LogEntry）
+     */
+    std::string FormatReleaseDirect(Level level, uint64_t timestamp,
+                                    const std::string& message) {
+        const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
+        const char* reset = m_colorEnabled ? color::kReset : "";
+
+#ifdef ONEPLOG_USE_FMT
+        return fmt::format("[{}] {}[{}]{} [{}] [{}] {}",
+            FormatTimestampSec(timestamp),
+            levelColor,
+            LevelToString(level, LevelNameStyle::Short4),
+            reset,
+            m_processName,
+            m_moduleName,
+            message);
+#else
+        std::string result;
+        result.reserve(256);
+        result += "[";
+        result += FormatTimestampSec(timestamp);
+        result += "] ";
+        result += levelColor;
+        result += "[";
+        result += LevelToString(level, LevelNameStyle::Short4);
+        result += "]";
+        result += reset;
+        result += " [";
+        result += m_processName;
+        result += "] [";
+        result += m_moduleName;
+        result += "] ";
+        result += message;
+        return result;
+#endif
+    }
+
+#ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Release mode format to buffer (zero heap allocation)
+     * @brief Release 模式格式化到缓冲区（零堆分配）
+     */
+    void FormatReleaseToBuffer(fmt::memory_buffer& buffer,
+                               Level level, uint64_t timestamp,
+                               std::string_view message) {
+        const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
+        const char* reset = m_colorEnabled ? color::kReset : "";
+
+        // Format timestamp to stack buffer
+        char timeBuf[12];
+        FormatTimestampSecToBuffer(timestamp, timeBuf, sizeof(timeBuf));
+
+        fmt::format_to(std::back_inserter(buffer),
+            "[{}] {}[{}]{} [{}] [{}] {}",
+            timeBuf,
+            levelColor,
+            LevelToString(level, LevelNameStyle::Short4),
+            reset,
+            m_processName,
+            m_moduleName,
+            message);
+    }
+#endif
 
     bool m_colorEnabled = true;
 };

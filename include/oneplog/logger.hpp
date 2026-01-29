@@ -446,48 +446,151 @@ private:
      */
     template<typename... Args>
     void LogImpl(Level level, const SourceLocation& loc, const char* fmt, Args&&... args) {
-        // Create log entry / 创建日志条目
-        LogEntry entry;
-        entry.timestamp = GetNanosecondTimestamp();
-        entry.level = level;
-        entry.threadId = GetCurrentThreadId();
-        entry.processId = GetCurrentProcessId();
-
-#ifndef NDEBUG
-        entry.file = loc.file;
-        entry.function = loc.function;
-        entry.line = loc.line;
-#else
-        (void)loc;  // Suppress unused warning in release mode
-#endif
-
-        // Capture format string and arguments / 捕获格式字符串和参数
-        // Format string is captured as the first argument
-        // 格式字符串作为第一个参数捕获
-        if constexpr (sizeof...(Args) == 0) {
-            // No arguments, just capture the format string as message
-            // 没有参数，只捕获格式字符串作为消息
-            entry.snapshot.CaptureStringView(std::string_view(fmt));
-        } else {
-            // Capture format string followed by arguments
-            // 捕获格式字符串，然后是参数
-            entry.snapshot.CaptureStringView(std::string_view(fmt));
-            entry.snapshot.Capture(std::forward<Args>(args)...);
-        }
+        // Get timestamp first for accurate timing
+        // 首先获取时间戳以确保准确计时
+        uint64_t timestamp = GetNanosecondTimestamp();
 
         // Process based on mode / 根据模式处理
         switch (m_mode) {
             case Mode::Sync:
-                ProcessEntrySync(entry);
+                ProcessEntrySyncDirect(level, timestamp, loc, fmt, std::forward<Args>(args)...);
                 break;
 
             case Mode::Async:
             case Mode::MProc:
-                if (m_heapRingBuffer) {
-                    m_heapRingBuffer->TryPush(std::move(entry));
-                    m_heapRingBuffer->NotifyConsumer();
-                }
+                ProcessEntryAsync(level, timestamp, loc, fmt, std::forward<Args>(args)...);
                 break;
+        }
+    }
+
+    /**
+     * @brief Process entry in sync mode with direct formatting (optimized)
+     * @brief 同步模式直接格式化处理（优化版）
+     */
+    template<typename... Args>
+    void ProcessEntrySyncDirect(Level level, uint64_t timestamp, 
+                                const SourceLocation& loc,
+                                const char* fmt, Args&&... args) {
+        // Get format requirements / 获取格式化需求
+        FormatRequirements req;
+        if (m_format) {
+            req = m_format->GetRequirements();
+        }
+
+        // Get thread/process ID only if needed / 仅在需要时获取线程/进程 ID
+        uint32_t threadId = req.needsThreadId ? GetCurrentThreadId() : 0;
+        uint32_t processId = req.needsProcessId ? GetCurrentProcessId() : 0;
+
+#ifdef ONEPLOG_USE_FMT
+        // Use stack-allocated buffer for zero heap allocation
+        // 使用栈分配的缓冲区实现零堆分配
+        fmt::memory_buffer msgBuffer;
+        
+        // Format message to buffer / 格式化消息到缓冲区
+        if constexpr (sizeof...(Args) == 0) {
+            msgBuffer.append(std::string_view(fmt));
+        } else {
+            fmt::format_to(std::back_inserter(msgBuffer), fmt::runtime(fmt), 
+                           std::forward<Args>(args)...);
+        }
+        std::string_view message(msgBuffer.data(), msgBuffer.size());
+
+        // Format output to buffer / 格式化输出到缓冲区
+        fmt::memory_buffer outputBuffer;
+        if (m_format) {
+            m_format->FormatDirectToBuffer(outputBuffer, level, timestamp, 
+                                           threadId, processId, message);
+        } else {
+            // Use default format / 使用默认格式
+            DefaultFormatDirectToBuffer(outputBuffer, level, timestamp, 
+                                        threadId, processId, message);
+        }
+
+        // Write to sinks using string_view (zero-copy)
+        // 使用 string_view 写入 Sink（零拷贝）
+        std::string_view output(outputBuffer.data(), outputBuffer.size());
+        for (auto& sink : m_sinks) {
+            if (sink) {
+                sink->Write(output);
+            }
+        }
+#else
+        // Fallback without fmt: use std::string
+        // 无 fmt 时的回退：使用 std::string
+        std::string message;
+        if constexpr (sizeof...(Args) == 0) {
+            message = fmt;
+        } else {
+            BinarySnapshot snapshot;
+            snapshot.CaptureStringView(std::string_view(fmt));
+            snapshot.Capture(std::forward<Args>(args)...);
+            message = snapshot.FormatAll();
+        }
+
+        std::string output;
+        if (m_format) {
+            output = m_format->FormatDirect(level, timestamp, threadId, processId, message);
+        } else {
+            output = DefaultFormatDirect(level, timestamp, threadId, processId, message);
+        }
+
+        for (auto& sink : m_sinks) {
+            if (sink) {
+                sink->Write(output);
+            }
+        }
+#endif
+
+        (void)loc;  // Source location not used in current formats
+    }
+
+    /**
+     * @brief Process entry in async mode
+     * @brief 异步模式处理
+     */
+    template<typename... Args>
+    void ProcessEntryAsync(Level level, uint64_t timestamp,
+                           const SourceLocation& loc,
+                           const char* fmt, Args&&... args) {
+        // Get format requirements / 获取格式化需求
+        FormatRequirements req;
+        if (m_format) {
+            req = m_format->GetRequirements();
+        } else {
+            // Default: need all metadata
+            req.needsThreadId = true;
+            req.needsProcessId = true;
+        }
+
+        // Create log entry / 创建日志条目
+        LogEntry entry;
+        entry.timestamp = timestamp;
+        entry.level = level;
+        entry.threadId = req.needsThreadId ? GetCurrentThreadId() : 0;
+        entry.processId = req.needsProcessId ? GetCurrentProcessId() : 0;
+
+#ifndef NDEBUG
+        if (req.needsSourceLocation) {
+            entry.file = loc.file;
+            entry.function = loc.function;
+            entry.line = loc.line;
+        }
+#else
+        (void)loc;
+#endif
+
+        // Capture format string and arguments / 捕获格式字符串和参数
+        if constexpr (sizeof...(Args) == 0) {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+        } else {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+            entry.snapshot.Capture(std::forward<Args>(args)...);
+        }
+
+        // Push to ring buffer / 推送到环形队列
+        if (m_heapRingBuffer) {
+            m_heapRingBuffer->TryPush(std::move(entry));
+            m_heapRingBuffer->NotifyConsumer();
         }
     }
 
@@ -532,8 +635,8 @@ private:
     }
 
     /**
-     * @brief Process entry in sync mode
-     * @brief 在同步模式下处理条目
+     * @brief Process entry in sync mode (legacy, for LogEntry)
+     * @brief 在同步模式下处理条目（遗留，用于 LogEntry）
      */
     void ProcessEntrySync(const LogEntry& entry) {
         std::string message;
@@ -561,6 +664,32 @@ private:
         static ConsoleFormat defaultFormat;
         return defaultFormat.FormatEntry(entry);
     }
+
+    /**
+     * @brief Default direct format (no LogEntry)
+     * @brief 默认直接格式化（无 LogEntry）
+     */
+    std::string DefaultFormatDirect(Level level, uint64_t timestamp,
+                                    uint32_t threadId, uint32_t processId,
+                                    const std::string& message) const {
+        static ConsoleFormat defaultFormat;
+        return defaultFormat.FormatDirect(level, timestamp, threadId, processId, message);
+    }
+
+#ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Default direct format to buffer (zero heap allocation)
+     * @brief 默认直接格式化到缓冲区（零堆分配）
+     */
+    void DefaultFormatDirectToBuffer(fmt::memory_buffer& buffer,
+                                     Level level, uint64_t timestamp,
+                                     uint32_t threadId, uint32_t processId,
+                                     std::string_view message) const {
+        static ConsoleFormat defaultFormat;
+        defaultFormat.FormatDirectToBuffer(buffer, level, timestamp, 
+                                           threadId, processId, message);
+    }
+#endif
 
     /**
      * @brief Get nanosecond timestamp

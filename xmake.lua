@@ -111,6 +111,12 @@ else
 end
 
 -- ==============================================================================
+-- spdlog for comparison benchmark / spdlog 用于对比测试
+-- Force using xmake repo version with bundled fmt
+-- ==============================================================================
+add_requires("spdlog", {system = false, configs = {header_only = true, fmt_external = false}, optional = true})
+
+-- ==============================================================================
 -- Tests / 测试
 -- ==============================================================================
 if has_config("tests") then
@@ -184,5 +190,38 @@ if has_config("examples") then
         set_default(false)
         add_files("example/benchmark.cpp")
         add_deps("oneplog")
+    target_end()
+    
+    -- spdlog comparison benchmark / spdlog 对比测试
+    -- This target does NOT depend on oneplog to avoid fmt conflicts
+    -- 此目标不依赖 oneplog 以避免 fmt 冲突
+    target("benchmark_compare")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/benchmark_compare.cpp")
+        add_includedirs("include")
+        -- Link oneplog sources directly
+        add_files("src/log_entry.cpp")
+        add_files("src/heap_ring_buffer.cpp")
+        add_files("src/shared_ring_buffer.cpp")
+        add_files("src/format.cpp")
+        add_files("src/sink.cpp")
+        add_files("src/pipeline_thread.cpp")
+        add_files("src/writer_thread.cpp")
+        add_files("src/logger.cpp")
+        add_files("src/memory_pool.cpp")
+        -- Add fmt sources
+        add_files("src/format.cc")
+        add_files("src/os.cc")
+        if is_plat("linux") then
+            add_syslinks("pthread", "rt")
+        elseif is_plat("macosx") then
+            add_syslinks("pthread")
+        end
+        if has_package("spdlog") then
+            add_packages("spdlog")
+            add_defines("HAS_SPDLOG")
+            add_defines("ONEPLOG_USE_FMT")
+        end
     target_end()
 end

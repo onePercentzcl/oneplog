@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -70,6 +71,18 @@ public:
      * @param message The formatted message to write / 要写入的格式化消息
      */
     virtual void Write(const std::string& message) = 0;
+
+    /**
+     * @brief Write a single log message (string_view version for zero-copy)
+     * @brief 写入单条日志消息（string_view 版本，零拷贝）
+     *
+     * @param message The formatted message to write / 要写入的格式化消息
+     */
+    virtual void Write(std::string_view message) {
+        // Default implementation: delegate to string version
+        // 默认实现：委托给 string 版本
+        Write(std::string(message));
+    }
 
     /**
      * @brief Write multiple log messages in batch
@@ -197,6 +210,17 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         FILE* out = (m_stream == Stream::StdOut) ? stdout : stderr;
         std::fputs(message.c_str(), out);
+        std::fputc('\n', out);
+    }
+
+    /**
+     * @brief Write a message to the console (string_view version)
+     * @brief 将消息写入控制台（string_view 版本）
+     */
+    void Write(std::string_view message) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        FILE* out = (m_stream == Stream::StdOut) ? stdout : stderr;
+        std::fwrite(message.data(), 1, message.size(), out);
         std::fputc('\n', out);
     }
 
@@ -348,6 +372,34 @@ public:
         }
 
         m_file << message << '\n';
+        m_currentSize += message.size() + 1;
+
+        if (m_file.fail()) {
+            m_hasError = true;
+            m_lastError = "Write failed";
+        }
+    }
+
+    /**
+     * @brief Write a message to the file (string_view version)
+     * @brief 将消息写入文件（string_view 版本）
+     */
+    void Write(std::string_view message) override {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        if (!m_file.is_open()) {
+            m_hasError = true;
+            m_lastError = "File not open";
+            return;
+        }
+
+        // Check if rotation is needed / 检查是否需要轮转
+        if (m_maxSize > 0 && m_currentSize + message.size() > m_maxSize) {
+            RotateFile();
+        }
+
+        m_file.write(message.data(), static_cast<std::streamsize>(message.size()));
+        m_file.put('\n');
         m_currentSize += message.size() + 1;
 
         if (m_file.fail()) {
