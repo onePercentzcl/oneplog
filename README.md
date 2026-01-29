@@ -103,7 +103,9 @@ int main() {
 - [x] SharedRingBuffer 实现（共享内存环形队列，继承自 RingBufferBase）
 - [x] SharedMemory 管理器（元数据、配置、进程/线程名称表）
 - [x] Format 实现（PatternFormat、JsonFormat）
-- [ ] Sink 实现
+- [x] Sink 实现（ConsoleSink、FileSink、NetworkSink）
+- [ ] PipelineThread 实现
+- [ ] WriterThread 实现
 - [ ] Logger 实现
 
 ## 许可证

@@ -49,6 +49,7 @@ set(ONEPLOG_HEADERS
     include/oneplog/binary_snapshot.hpp
     include/oneplog/log_entry.hpp
     include/oneplog/format.hpp
+    include/oneplog/sink.hpp
 )
 
 set(ONEPLOG_SOURCES
@@ -57,6 +58,7 @@ set(ONEPLOG_SOURCES
     src/log_entry.cpp
     src/shared_ring_buffer.cpp
     src/format.cpp
+    src/sink.cpp
 )
 
 # ==============================================================================

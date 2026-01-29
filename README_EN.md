@@ -84,7 +84,9 @@ int main() {
 - [x] SharedRingBuffer implementation (shared memory ring buffer, inherits from RingBufferBase)
 - [x] SharedMemory manager (metadata, config, process/thread name table)
 - [x] Format implementation (PatternFormat, JsonFormat)
-- [ ] Sink implementation
+- [x] Sink implementation (ConsoleSink, FileSink, NetworkSink)
+- [ ] PipelineThread implementation
+- [ ] WriterThread implementation
 - [ ] Logger implementation
 
 ## License
