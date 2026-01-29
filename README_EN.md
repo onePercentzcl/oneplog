@@ -90,7 +90,7 @@ int main() {
 - [x] Logger implementation (Sync/Async/MProc modes, WFC support)
 - [x] Global API (DefaultLogger, convenience functions, process/module names)
 - [x] Macros (ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL, WFC, conditional logging, compile-time disable)
-- [ ] MemoryPool implementation
+- [x] MemoryPool implementation (lock-free memory pool, pre-allocation, allocate/deallocate)
 - [ ] Example code
 
 ## License

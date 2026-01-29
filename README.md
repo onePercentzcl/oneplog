@@ -109,7 +109,7 @@ int main() {
 - [x] Logger 实现（Sync/Async/MProc 模式、WFC 支持）
 - [x] 全局 API（DefaultLogger、便捷函数、进程/模块名称）
 - [x] 宏定义（ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL、WFC、条件日志、编译时禁用）
-- [ ] MemoryPool 实现
+- [x] MemoryPool 实现（无锁内存池、预分配、分配/释放）
 - [ ] 示例代码
 
 ## 许可证

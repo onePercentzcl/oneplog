@@ -38,5 +38,8 @@
 // Logger / 日志器
 #include "oneplog/logger.hpp"
 
+// Memory pool / 内存池
+#include "oneplog/memory_pool.hpp"
+
 // Macros / 宏定义
 #include "oneplog/macros.hpp"
