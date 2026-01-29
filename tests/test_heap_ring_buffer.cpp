@@ -81,11 +81,11 @@ TEST(HeapRingBufferTest, MultiplePushPop) {
 }
 
 /**
- * @brief Test queue full condition
- * @brief 测试队列满条件
+ * @brief Test queue full condition with DropNewest policy
+ * @brief 测试队列满条件（DropNewest 策略）
  */
-TEST(HeapRingBufferTest, QueueFull) {
-    HeapRingBuffer<int> buffer(4);
+TEST(HeapRingBufferTest, QueueFullDropNewest) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropNewest);
     
     // Fill the queue / 填满队列
     for (int i = 0; i < 4; ++i) {
@@ -93,13 +93,178 @@ TEST(HeapRingBufferTest, QueueFull) {
     }
     EXPECT_TRUE(buffer.IsFull());
     
-    // Try to push when full / 满时尝试推入
+    // Try to push when full - should fail and increment dropped count
+    // 满时尝试推入 - 应该失败并增加丢弃计数
     EXPECT_FALSE(buffer.TryPush(100));
+    EXPECT_EQ(buffer.GetDroppedCount(), 1);
     
     // Pop one and push again / 弹出一个再推入
     int value;
     EXPECT_TRUE(buffer.TryPop(value));
     EXPECT_TRUE(buffer.TryPush(100));
+}
+
+/**
+ * @brief Test queue full condition with DropOldest policy
+ * @brief 测试队列满条件（DropOldest 策略）
+ */
+TEST(HeapRingBufferTest, QueueFullDropOldest) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropOldest);
+    
+    // Fill the queue with 0, 1, 2, 3 / 用 0, 1, 2, 3 填满队列
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    // Push when full - should drop oldest and succeed
+    // 满时推入 - 应该丢弃最旧的并成功
+    EXPECT_TRUE(buffer.TryPush(100));
+    EXPECT_EQ(buffer.GetDroppedCount(), 1);
+    
+    // Verify the oldest was dropped (0 should be gone)
+    // 验证最旧的被丢弃（0 应该不见了）
+    std::vector<int> values;
+    int value;
+    while (buffer.TryPop(value)) {
+        values.push_back(value);
+    }
+    
+    // Should have 1, 2, 3, 100 (0 was dropped)
+    // 应该有 1, 2, 3, 100（0 被丢弃）
+    EXPECT_EQ(values.size(), 4);
+    EXPECT_EQ(values[0], 1);
+    EXPECT_EQ(values[3], 100);
+}
+
+/**
+ * @brief Test queue full condition with Block policy
+ * @brief 测试队列满条件（Block 策略）
+ */
+TEST(HeapRingBufferTest, QueueFullBlock) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::Block);
+    
+    // Fill the queue / 填满队列
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(buffer.TryPush(i));
+    }
+    EXPECT_TRUE(buffer.IsFull());
+    
+    std::atomic<bool> pushCompleted{false};
+    
+    // Start a thread that will block on push / 启动一个将在推入时阻塞的线程
+    std::thread producer([&]() {
+        buffer.TryPush(100);  // This will block / 这将阻塞
+        pushCompleted.store(true, std::memory_order_release);
+    });
+    
+    // Give producer time to start blocking / 给生产者时间开始阻塞
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_FALSE(pushCompleted.load(std::memory_order_acquire));
+    
+    // Pop one item to unblock producer / 弹出一个元素以解除生产者阻塞
+    int value;
+    EXPECT_TRUE(buffer.TryPop(value));
+    
+    // Wait for producer to complete / 等待生产者完成
+    producer.join();
+    EXPECT_TRUE(pushCompleted.load(std::memory_order_acquire));
+}
+
+/**
+ * @brief Test consumer state tracking
+ * @brief 测试消费者状态跟踪
+ */
+TEST(HeapRingBufferTest, ConsumerStateTracking) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // Initially consumer should be Active / 初始时消费者应该是 Active
+    EXPECT_EQ(buffer.GetConsumerState(), ConsumerState::Active);
+    
+    // Start a consumer thread that will wait for data
+    // 启动一个将等待数据的消费者线程
+    std::atomic<bool> consumerStarted{false};
+    std::atomic<bool> consumerDone{false};
+    
+    std::thread consumer([&]() {
+        consumerStarted.store(true, std::memory_order_release);
+        // This will poll briefly then enter WaitingNotify state
+        // 这将短暂轮询然后进入 WaitingNotify 状态
+        buffer.WaitForData(std::chrono::microseconds(100), 
+                          std::chrono::milliseconds(1000));
+        consumerDone.store(true, std::memory_order_release);
+    });
+    
+    // Wait for consumer to start / 等待消费者启动
+    while (!consumerStarted.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    
+    // Give consumer time to enter waiting state / 给消费者时间进入等待状态
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
+    // Consumer should be in WaitingNotify state / 消费者应该处于 WaitingNotify 状态
+    EXPECT_EQ(buffer.GetConsumerState(), ConsumerState::WaitingNotify);
+    
+    // Push data to wake up consumer / 推入数据唤醒消费者
+    buffer.TryPush(42);
+    
+    // Wait for consumer to complete / 等待消费者完成
+    consumer.join();
+    EXPECT_TRUE(consumerDone.load(std::memory_order_acquire));
+    
+    // Consumer should be back to Active / 消费者应该回到 Active
+    EXPECT_EQ(buffer.GetConsumerState(), ConsumerState::Active);
+}
+
+/**
+ * @brief Test notification optimization
+ * @brief 测试通知优化
+ */
+TEST(HeapRingBufferTest, NotificationOptimization) {
+    HeapRingBuffer<int> buffer(16);
+    
+    // When consumer is Active, NotifyConsumerIfWaiting should not notify
+    // 当消费者是 Active 时，NotifyConsumerIfWaiting 不应该通知
+    // (We can't directly test this, but we can verify the state logic)
+    
+    // Push some data / 推入一些数据
+    for (int i = 0; i < 5; ++i) {
+        buffer.TryPush(i);
+    }
+    
+    // Consumer state should still be Active / 消费者状态应该仍然是 Active
+    EXPECT_EQ(buffer.GetConsumerState(), ConsumerState::Active);
+    
+    // Pop all data / 弹出所有数据
+    int value;
+    while (buffer.TryPop(value)) {}
+    
+    EXPECT_TRUE(buffer.IsEmpty());
+}
+
+/**
+ * @brief Test dropped count tracking
+ * @brief 测试丢弃计数跟踪
+ */
+TEST(HeapRingBufferTest, DroppedCountTracking) {
+    HeapRingBuffer<int> buffer(4, QueueFullPolicy::DropNewest);
+    
+    // Fill the queue / 填满队列
+    for (int i = 0; i < 4; ++i) {
+        buffer.TryPush(i);
+    }
+    
+    // Try to push more (should be dropped) / 尝试推入更多（应该被丢弃）
+    for (int i = 0; i < 10; ++i) {
+        buffer.TryPush(100 + i);
+    }
+    
+    EXPECT_EQ(buffer.GetDroppedCount(), 10);
+    
+    // Reset dropped count / 重置丢弃计数
+    buffer.ResetDroppedCount();
+    EXPECT_EQ(buffer.GetDroppedCount(), 0);
 }
 
 /**

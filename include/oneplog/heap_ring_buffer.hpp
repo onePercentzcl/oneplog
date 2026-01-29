@@ -30,6 +30,33 @@
 
 namespace oneplog {
 
+// ==============================================================================
+// Queue Full Policy / 队列满策略
+// ==============================================================================
+
+/**
+ * @brief Policy when queue is full
+ * @brief 队列满时的策略
+ */
+enum class QueueFullPolicy : uint8_t {
+    Block = 0,      ///< Block until space available / 阻塞直到有空间
+    DropNewest = 1, ///< Drop the new log entry / 丢弃新日志
+    DropOldest = 2  ///< Drop the oldest log entry / 丢弃旧日志
+};
+
+// ==============================================================================
+// Consumer State / 消费者状态
+// ==============================================================================
+
+/**
+ * @brief Consumer state for notification optimization
+ * @brief 用于通知优化的消费者状态
+ */
+enum class ConsumerState : uint8_t {
+    Active = 0,         ///< Consumer is actively polling / 消费者正在主动轮询
+    WaitingNotify = 1   ///< Consumer is waiting for notification / 消费者正在等待通知
+};
+
 /**
  * @brief Lock-free ring buffer for asynchronous logging
  * @brief 用于异步日志的无锁环形队列
@@ -39,12 +66,16 @@ namespace oneplog {
  * - Atomic operations for thread-safe access
  * - Cache-line aligned head/tail to prevent false sharing
  * - Slot-based state machine for coordination
+ * - Configurable queue full policy (block/drop newest/drop oldest)
+ * - Optimized notification mechanism with consumer state tracking
  *
  * HeapRingBuffer 是一个多生产者单消费者（MPSC）无锁队列，
  * 专为高性能异步日志设计。它使用：
  * - 原子操作实现线程安全访问
  * - 缓存行对齐的 head/tail 防止伪共享
  * - 基于槽位的状态机进行协调
+ * - 可配置的队列满策略（阻塞/丢弃新日志/丢弃旧日志）
+ * - 带消费者状态跟踪的优化通知机制
  *
  * @tparam T The element type to store / 要存储的元素类型
  */
@@ -55,13 +86,16 @@ public:
     static constexpr int64_t kInvalidSlot = -1;
 
     /**
-     * @brief Construct a ring buffer with specified capacity
-     * @brief 使用指定容量构造环形队列
+     * @brief Construct a ring buffer with specified capacity and policy
+     * @brief 使用指定容量和策略构造环形队列
      *
      * @param capacity The maximum number of elements / 最大元素数量
+     * @param policy Queue full policy / 队列满策略
      */
-    explicit HeapRingBuffer(size_t capacity)
+    explicit HeapRingBuffer(size_t capacity, 
+                            QueueFullPolicy policy = QueueFullPolicy::DropNewest)
         : m_capacity(capacity)
+        , m_policy(policy)
         , m_buffer(capacity)
         , m_slotStatus(capacity)
 #ifdef __linux__
@@ -72,6 +106,8 @@ public:
     {
         m_head.value.store(0, std::memory_order_relaxed);
         m_tail.value.store(0, std::memory_order_relaxed);
+        m_consumerState.value.store(ConsumerState::Active, std::memory_order_relaxed);
+        m_droppedCount.value.store(0, std::memory_order_relaxed);
         
         // Initialize all slots to empty state
         // 初始化所有槽位为空状态
@@ -92,8 +128,6 @@ public:
         }
 #elif defined(__APPLE__)
         if (m_semaphore != nullptr) {
-            // dispatch_release is not needed for semaphores created with dispatch_semaphore_create
-            // on modern macOS, but we set to nullptr for safety
             m_semaphore = nullptr;
         }
 #endif
@@ -106,6 +140,7 @@ public:
     // Movable / 可移动
     HeapRingBuffer(HeapRingBuffer&& other) noexcept
         : m_capacity(other.m_capacity)
+        , m_policy(other.m_policy)
         , m_buffer(std::move(other.m_buffer))
         , m_slotStatus(std::move(other.m_slotStatus))
 #ifdef __linux__
@@ -118,6 +153,10 @@ public:
                           std::memory_order_relaxed);
         m_tail.value.store(other.m_tail.value.load(std::memory_order_relaxed), 
                           std::memory_order_relaxed);
+        m_consumerState.value.store(other.m_consumerState.value.load(std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+        m_droppedCount.value.store(other.m_droppedCount.value.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
 #ifdef __linux__
         other.m_eventFd = -1;
 #elif defined(__APPLE__)
@@ -138,14 +177,55 @@ public:
             other.m_semaphore = nullptr;
 #endif
             m_capacity = other.m_capacity;
+            m_policy = other.m_policy;
             m_buffer = std::move(other.m_buffer);
             m_slotStatus = std::move(other.m_slotStatus);
             m_head.value.store(other.m_head.value.load(std::memory_order_relaxed), 
                               std::memory_order_relaxed);
             m_tail.value.store(other.m_tail.value.load(std::memory_order_relaxed), 
                               std::memory_order_relaxed);
+            m_consumerState.value.store(other.m_consumerState.value.load(std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+            m_droppedCount.value.store(other.m_droppedCount.value.load(std::memory_order_relaxed),
+                                       std::memory_order_relaxed);
         }
         return *this;
+    }
+
+    // =========================================================================
+    // Configuration / 配置
+    // =========================================================================
+
+    /**
+     * @brief Set queue full policy
+     * @brief 设置队列满策略
+     */
+    void SetPolicy(QueueFullPolicy policy) noexcept {
+        m_policy = policy;
+    }
+
+    /**
+     * @brief Get queue full policy
+     * @brief 获取队列满策略
+     */
+    QueueFullPolicy GetPolicy() const noexcept {
+        return m_policy;
+    }
+
+    /**
+     * @brief Get number of dropped entries
+     * @brief 获取丢弃的条目数量
+     */
+    uint64_t GetDroppedCount() const noexcept {
+        return m_droppedCount.value.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset dropped count
+     * @brief 重置丢弃计数
+     */
+    void ResetDroppedCount() noexcept {
+        m_droppedCount.value.store(0, std::memory_order_relaxed);
     }
 
     // =========================================================================
@@ -156,8 +236,8 @@ public:
      * @brief Acquire a slot for writing (claim index first, then write)
      * @brief 获取一个用于写入的槽位（先抢占索引，再写入）
      *
-     * @return Slot index if successful, kInvalidSlot if queue is full
-     * @return 成功时返回槽位索引，队列满时返回 kInvalidSlot
+     * @return Slot index if successful, kInvalidSlot if queue is full (DropNewest policy)
+     * @return 成功时返回槽位索引，队列满时返回 kInvalidSlot（DropNewest 策略）
      */
     int64_t AcquireSlot() noexcept {
         size_t head = m_head.value.load(std::memory_order_relaxed);
@@ -167,7 +247,29 @@ public:
             
             // Check if queue is full / 检查队列是否已满
             if (head - tail >= m_capacity) {
-                return kInvalidSlot;
+                switch (m_policy) {
+                    case QueueFullPolicy::DropNewest:
+                        // Drop the new entry / 丢弃新条目
+                        m_droppedCount.value.fetch_add(1, std::memory_order_relaxed);
+                        return kInvalidSlot;
+                    
+                    case QueueFullPolicy::DropOldest:
+                        // Try to advance tail to drop oldest / 尝试推进 tail 丢弃最旧的
+                        if (DropOldestEntry()) {
+                            // Retry after dropping / 丢弃后重试
+                            continue;
+                        }
+                        // If drop failed, yield and retry / 如果丢弃失败，让出并重试
+                        std::this_thread::yield();
+                        continue;
+                    
+                    case QueueFullPolicy::Block:
+                    default:
+                        // Block until space available / 阻塞直到有空间
+                        std::this_thread::yield();
+                        head = m_head.value.load(std::memory_order_relaxed);
+                        continue;
+                }
             }
             
             // Try to claim the slot / 尝试抢占槽位
@@ -179,7 +281,6 @@ public:
                 // Wait for slot to be empty (in case of wrap-around)
                 // 等待槽位为空（处理环绕情况）
                 while (!m_slotStatus[slot].TryAcquire()) {
-                    // Spin wait / 自旋等待
                     std::this_thread::yield();
                 }
                 
@@ -209,9 +310,6 @@ public:
     /**
      * @brief Commit data to a previously acquired slot (copy version)
      * @brief 将数据提交到之前获取的槽位（拷贝版本）
-     *
-     * @param slot The slot index returned by AcquireSlot / AcquireSlot 返回的槽位索引
-     * @param item The item to store / 要存储的元素
      */
     void CommitSlot(int64_t slot, const T& item) noexcept {
         if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) {
@@ -228,8 +326,8 @@ public:
      * @brief 尝试将元素推入队列
      *
      * @param item The item to push / 要推入的元素
-     * @return true if successful, false if queue is full
-     * @return 成功返回 true，队列满返回 false
+     * @return true if successful, false if dropped (DropNewest policy)
+     * @return 成功返回 true，被丢弃返回 false（DropNewest 策略）
      */
     bool TryPush(T&& item) noexcept {
         int64_t slot = AcquireSlot();
@@ -238,17 +336,13 @@ public:
         }
         
         CommitSlot(slot, std::move(item));
-        NotifyConsumer();
+        NotifyConsumerIfWaiting();
         return true;
     }
 
     /**
      * @brief Try to push an item to the queue (copy version)
      * @brief 尝试将元素推入队列（拷贝版本）
-     *
-     * @param item The item to push / 要推入的元素
-     * @return true if successful, false if queue is full
-     * @return 成功返回 true，队列满返回 false
      */
     bool TryPush(const T& item) noexcept {
         int64_t slot = AcquireSlot();
@@ -257,7 +351,7 @@ public:
         }
         
         CommitSlot(slot, item);
-        NotifyConsumer();
+        NotifyConsumerIfWaiting();
         return true;
     }
 
@@ -266,8 +360,8 @@ public:
      * @brief 尝试推入带 WFC（等待完成）标志的元素
      *
      * @param item The item to push / 要推入的元素
-     * @return Slot index if successful, kInvalidSlot if queue is full
-     * @return 成功返回槽位索引，队列满返回 kInvalidSlot
+     * @return Slot index if successful, kInvalidSlot if dropped
+     * @return 成功返回槽位索引，被丢弃返回 kInvalidSlot
      */
     int64_t TryPushWFC(T&& item) noexcept {
         int64_t slot = AcquireSlot();
@@ -279,17 +373,13 @@ public:
         m_buffer[idx] = std::move(item);
         m_slotStatus[idx].EnableWFC();
         m_slotStatus[idx].Commit();
-        NotifyConsumer();
+        NotifyConsumerIfWaiting();
         return slot;
     }
 
     /**
      * @brief Try to push an item with WFC flag (copy version)
      * @brief 尝试推入带 WFC 标志的元素（拷贝版本）
-     *
-     * @param item The item to push / 要推入的元素
-     * @return Slot index if successful, kInvalidSlot if queue is full
-     * @return 成功返回槽位索引，队列满返回 kInvalidSlot
      */
     int64_t TryPushWFC(const T& item) noexcept {
         int64_t slot = AcquireSlot();
@@ -301,7 +391,7 @@ public:
         m_buffer[idx] = item;
         m_slotStatus[idx].EnableWFC();
         m_slotStatus[idx].Commit();
-        NotifyConsumer();
+        NotifyConsumerIfWaiting();
         return slot;
     }
 
@@ -384,8 +474,6 @@ public:
     /**
      * @brief Mark WFC as completed for a slot
      * @brief 标记槽位的 WFC 为完成
-     *
-     * @param slot The slot index / 槽位索引
      */
     void MarkWFCComplete(int64_t slot) noexcept {
         if (slot >= 0 && static_cast<size_t>(slot) < m_capacity) {
@@ -396,11 +484,6 @@ public:
     /**
      * @brief Wait for WFC completion on a slot
      * @brief 等待槽位的 WFC 完成
-     *
-     * @param slot The slot index / 槽位索引
-     * @param timeout Maximum time to wait / 最大等待时间
-     * @return true if completed, false if timeout
-     * @return 完成返回 true，超时返回 false
      */
     bool WaitForCompletion(int64_t slot, std::chrono::milliseconds timeout) noexcept {
         if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) {
@@ -423,9 +506,6 @@ public:
     /**
      * @brief Get WFC state for a slot
      * @brief 获取槽位的 WFC 状态
-     *
-     * @param slot The slot index / 槽位索引
-     * @return WFC state / WFC 状态
      */
     WFCState GetWFCState(int64_t slot) const noexcept {
         if (slot < 0 || static_cast<size_t>(slot) >= m_capacity) {
@@ -476,6 +556,14 @@ public:
         return m_capacity;
     }
 
+    /**
+     * @brief Get consumer state
+     * @brief 获取消费者状态
+     */
+    ConsumerState GetConsumerState() const noexcept {
+        return m_consumerState.value.load(std::memory_order_acquire);
+    }
+
     // =========================================================================
     // Notification Mechanism / 通知机制
     // =========================================================================
@@ -491,10 +579,133 @@ public:
 #endif
 
     /**
-     * @brief Notify consumer that new data is available
-     * @brief 通知消费者有新数据可用
+     * @brief Notify consumer only if it's in waiting state
+     * @brief 仅当消费者处于等待状态时才通知
+     *
+     * This optimizes notification by avoiding unnecessary system calls
+     * when the consumer is actively polling.
+     * 通过避免消费者主动轮询时的不必要系统调用来优化通知。
+     */
+    void NotifyConsumerIfWaiting() noexcept {
+        // Only notify if consumer is waiting / 仅当消费者等待时才通知
+        if (m_consumerState.value.load(std::memory_order_acquire) == ConsumerState::WaitingNotify) {
+            DoNotify();
+        }
+    }
+
+    /**
+     * @brief Force notify consumer (unconditional)
+     * @brief 强制通知消费者（无条件）
      */
     void NotifyConsumer() noexcept {
+        DoNotify();
+    }
+
+    /**
+     * @brief Wait for data with polling and timeout (consumer side)
+     * @brief 使用轮询和超时等待数据（消费者端）
+     *
+     * Consumer workflow:
+     * 1. Try to read data from queue
+     * 2. If empty, poll for pollInterval
+     * 3. If still empty, set state to WaitingNotify and wait for notification
+     * 4. After waking up, set state back to Active
+     *
+     * 消费者工作流程：
+     * 1. 尝试从队列读取数据
+     * 2. 如果为空，轮询 pollInterval 时间
+     * 3. 如果仍然为空，设置状态为 WaitingNotify 并等待通知
+     * 4. 唤醒后，将状态设置回 Active
+     *
+     * @param pollInterval Polling interval before entering wait state / 进入等待状态前的轮询间隔
+     * @param pollTimeout Maximum wait time for notification / 等待通知的最大时间
+     * @return true if data is available, false if timeout
+     * @return 有数据返回 true，超时返回 false
+     */
+    bool WaitForData(std::chrono::microseconds pollInterval,
+                     std::chrono::milliseconds pollTimeout) noexcept {
+        // Set consumer state to Active (polling phase)
+        // 设置消费者状态为 Active（轮询阶段）
+        m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+        
+        // Phase 1: Poll for a short time / 阶段 1：短时间轮询
+        auto pollEnd = std::chrono::steady_clock::now() + pollInterval;
+        while (std::chrono::steady_clock::now() < pollEnd) {
+            if (!IsEmpty()) {
+                return true;
+            }
+            std::this_thread::yield();
+        }
+        
+        // Check again before entering wait state / 进入等待状态前再次检查
+        if (!IsEmpty()) {
+            return true;
+        }
+        
+        // Phase 2: Enter waiting state / 阶段 2：进入等待状态
+        // Set state to WaitingNotify BEFORE checking queue again
+        // 在再次检查队列之前设置状态为 WaitingNotify
+        m_consumerState.value.store(ConsumerState::WaitingNotify, std::memory_order_release);
+        
+        // Double-check after setting state (avoid race condition)
+        // 设置状态后再次检查（避免竞态条件）
+        if (!IsEmpty()) {
+            m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+            return true;
+        }
+        
+        // Phase 3: Wait for notification / 阶段 3：等待通知
+        bool hasData = DoWait(pollTimeout);
+        
+        // Set state back to Active / 将状态设置回 Active
+        m_consumerState.value.store(ConsumerState::Active, std::memory_order_release);
+        
+        return hasData || !IsEmpty();
+    }
+
+private:
+    /**
+     * @brief Drop the oldest entry when queue is full
+     * @brief 队列满时丢弃最旧的条目
+     *
+     * @return true if successfully dropped, false otherwise
+     * @return 成功丢弃返回 true，否则返回 false
+     */
+    bool DropOldestEntry() noexcept {
+        size_t tail = m_tail.value.load(std::memory_order_relaxed);
+        size_t head = m_head.value.load(std::memory_order_acquire);
+        
+        // Check if there's something to drop / 检查是否有东西可以丢弃
+        if (tail >= head) {
+            return false;
+        }
+        
+        size_t slot = tail % m_capacity;
+        
+        // Try to start reading (to drop) / 尝试开始读取（以丢弃）
+        if (!m_slotStatus[slot].TryStartRead()) {
+            return false;
+        }
+        
+        // Complete the read (drop the entry) / 完成读取（丢弃条目）
+        m_slotStatus[slot].CompleteRead();
+        
+        // Advance tail / 推进 tail
+        if (m_tail.value.compare_exchange_strong(tail, tail + 1,
+                                                  std::memory_order_acq_rel,
+                                                  std::memory_order_relaxed)) {
+            m_droppedCount.value.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * @brief Perform the actual notification
+     * @brief 执行实际的通知
+     */
+    void DoNotify() noexcept {
 #ifdef __linux__
         if (m_eventFd >= 0) {
             uint64_t val = 1;
@@ -508,33 +719,10 @@ public:
     }
 
     /**
-     * @brief Wait for data with polling and timeout
-     * @brief 使用轮询和超时等待数据
-     *
-     * First polls for pollInterval, then waits for notification up to pollTimeout.
-     * 首先轮询 pollInterval 时间，然后等待通知最多 pollTimeout 时间。
-     *
-     * @param pollInterval Polling interval / 轮询间隔
-     * @param pollTimeout Maximum wait time after polling / 轮询后的最大等待时间
-     * @return true if data is available, false if timeout
-     * @return 有数据返回 true，超时返回 false
+     * @brief Perform the actual wait
+     * @brief 执行实际的等待
      */
-    bool WaitForData(std::chrono::microseconds pollInterval,
-                     std::chrono::milliseconds pollTimeout) noexcept {
-        // First, poll for a short time / 首先，短时间轮询
-        auto pollEnd = std::chrono::steady_clock::now() + pollInterval;
-        while (std::chrono::steady_clock::now() < pollEnd) {
-            if (!IsEmpty()) {
-                return true;
-            }
-            std::this_thread::yield();
-        }
-        
-        // If still empty, wait for notification / 如果仍然为空，等待通知
-        if (!IsEmpty()) {
-            return true;
-        }
-
+    bool DoWait(std::chrono::milliseconds timeout) noexcept {
 #ifdef __linux__
         if (m_eventFd >= 0) {
             struct pollfd pfd;
@@ -542,29 +730,26 @@ public:
             pfd.events = POLLIN;
             pfd.revents = 0;
             
-            int ret = poll(&pfd, 1, static_cast<int>(pollTimeout.count()));
+            int ret = poll(&pfd, 1, static_cast<int>(timeout.count()));
             if (ret > 0 && (pfd.revents & POLLIN)) {
                 // Consume the event / 消费事件
                 uint64_t val;
                 [[maybe_unused]] ssize_t r = read(m_eventFd, &val, sizeof(val));
-                return !IsEmpty();
+                return true;
             }
+            return false;
         }
 #elif defined(__APPLE__)
         if (m_semaphore != nullptr) {
-            dispatch_time_t timeout = dispatch_time(
+            dispatch_time_t dt = dispatch_time(
                 DISPATCH_TIME_NOW, 
-                static_cast<int64_t>(pollTimeout.count()) * NSEC_PER_MSEC);
-            long ret = dispatch_semaphore_wait(m_semaphore, timeout);
-            if (ret == 0) {
-                return !IsEmpty();
-            }
+                static_cast<int64_t>(timeout.count()) * NSEC_PER_MSEC);
+            long ret = dispatch_semaphore_wait(m_semaphore, dt);
+            return ret == 0;
         }
-#else
-        // Fallback: just sleep and check / 回退：只是睡眠并检查
-        std::this_thread::sleep_for(pollTimeout);
 #endif
-        
+        // Fallback: just sleep / 回退：只是睡眠
+        std::this_thread::sleep_for(timeout);
         return !IsEmpty();
     }
 
@@ -574,7 +759,15 @@ private:
     CacheLineAligned<std::atomic<size_t>> m_head;
     CacheLineAligned<std::atomic<size_t>> m_tail;
     
+    // Consumer state for notification optimization
+    // 用于通知优化的消费者状态
+    CacheLineAligned<std::atomic<ConsumerState>> m_consumerState;
+    
+    // Dropped entry count / 丢弃的条目计数
+    CacheLineAligned<std::atomic<uint64_t>> m_droppedCount;
+    
     size_t m_capacity;                    ///< Queue capacity / 队列容量
+    QueueFullPolicy m_policy;             ///< Queue full policy / 队列满策略
     std::vector<T> m_buffer;              ///< Data buffer / 数据缓冲区
     std::vector<SlotStatus> m_slotStatus; ///< Slot status array / 槽位状态数组
 
