@@ -305,16 +305,16 @@ Test results on Apple M4 Pro (14 cores) macOS:
 
 ### Comparison with spdlog
 
-Fair comparison using the same output format (message only):
+Fair comparison using the same output format (message only). Results are average ± standard deviation over 100 runs:
 
 | Test | onePlog | spdlog | Comparison |
 |------|---------|--------|------------|
-| Sync Mode (Null Sink) | 14.7M ops/sec | 15.9M ops/sec | -7.5% |
-| Async Mode (1 Thread) | 9.7M ops/sec | 4.6M ops/sec | +111% |
-| Async Mode (4 Threads) | 7.5M ops/sec | 3.1M ops/sec | +147% |
-| Sync File Output | 9.9M ops/sec | 9.3M ops/sec | +7% |
-| Async File Output | 14.1M ops/sec | 4.9M ops/sec | +188% |
-| Async File (4 Threads) | 8.2M ops/sec | 3.3M ops/sec | +150% |
+| Sync Mode (Null Sink) | 15.1M ± 1.0M ops/sec | 15.1M ± 0.6M ops/sec | +0.2% |
+| Async Mode (1 Thread) | 19.4M ± 1.6M ops/sec | 4.8M ± 0.4M ops/sec | +300% |
+| Async Mode (4 Threads) | 8.8M ± 0.6M ops/sec | 3.2M ± 0.04M ops/sec | +180% |
+| Sync File Output | 10.1M ± 0.1M ops/sec | 8.8M ± 0.2M ops/sec | +15% |
+| Async File Output | 19.5M ± 0.2M ops/sec | 5.0M ± 0.1M ops/sec | +290% |
+| Async File (4 Threads) | 9.3M ± 0.5M ops/sec | 3.4M ± 0.03M ops/sec | +172% |
 
 **Key Optimizations**:
 - Sync mode uses `fmt::memory_buffer` stack buffer for zero heap allocation
@@ -325,8 +325,13 @@ Run performance benchmark:
 ```bash
 xmake f -m release
 xmake -r benchmark_compare
-./build/macosx/arm64/release/benchmark_compare -i 500000
+./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
 ```
+
+Command line arguments:
+- `-i <iterations>`: Number of iterations per test (default: 500000)
+- `-t <threads>`: Number of threads for multi-threaded tests (default: 4)
+- `-r <runs>`: Number of runs for calculating average and standard deviation (default: 100)
 
 ## Development Progress
 

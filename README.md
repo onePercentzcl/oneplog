@@ -305,16 +305,16 @@ xmake run benchmark
 
 ### 与 spdlog 性能对比
 
-使用相同输出格式（仅消息）进行公平对比：
+使用相同输出格式（仅消息）进行公平对比，结果为 100 次运行的平均值 ± 标准差：
 
 | 测试项 | onePlog | spdlog | 对比 |
 |--------|---------|--------|------|
-| 同步模式（Null Sink） | 1469 万 ops/sec | 1588 万 ops/sec | -7.5% |
-| 异步模式（单线程） | 966 万 ops/sec | 458 万 ops/sec | +111% |
-| 异步模式（4线程） | 753 万 ops/sec | 305 万 ops/sec | +147% |
-| 同步文件输出 | 990 万 ops/sec | 925 万 ops/sec | +7% |
-| 异步文件输出 | 1409 万 ops/sec | 490 万 ops/sec | +188% |
-| 异步文件（4线程） | 822 万 ops/sec | 329 万 ops/sec | +150% |
+| 同步模式（Null Sink） | 1513 万 ± 96 万 ops/sec | 1510 万 ± 61 万 ops/sec | +0.2% |
+| 异步模式（单线程） | 1937 万 ± 156 万 ops/sec | 484 万 ± 42 万 ops/sec | +300% |
+| 异步模式（4线程） | 881 万 ± 56 万 ops/sec | 315 万 ± 4 万 ops/sec | +180% |
+| 同步文件输出 | 1010 万 ± 13 万 ops/sec | 877 万 ± 24 万 ops/sec | +15% |
+| 异步文件输出 | 1947 万 ± 23 万 ops/sec | 499 万 ± 10 万 ops/sec | +290% |
+| 异步文件（4线程） | 931 万 ± 53 万 ops/sec | 343 万 ± 3 万 ops/sec | +172% |
 
 **关键优化**：
 - 同步模式使用 `fmt::memory_buffer` 栈缓冲区，实现零堆分配
@@ -325,8 +325,13 @@ xmake run benchmark
 ```bash
 xmake f -m release
 xmake -r benchmark_compare
-./build/macosx/arm64/release/benchmark_compare -i 500000
+./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
 ```
+
+命令行参数：
+- `-i <iterations>`: 每次测试的迭代次数（默认 500000）
+- `-t <threads>`: 多线程测试的线程数（默认 4）
+- `-r <runs>`: 运行次数，用于计算平均值和标准差（默认 100）
 
 ## 开发进度
 

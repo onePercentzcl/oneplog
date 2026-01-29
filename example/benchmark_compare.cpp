@@ -37,6 +37,7 @@ struct Config {
     int iterations = 500000;
     int threads = 4;
     int warmup = 10000;
+    int runs = 100;  // 运行次数 / Number of runs
 };
 
 // ==============================================================================
@@ -74,6 +75,38 @@ std::string FormatThroughput(double val) {
         oss << std::fixed << std::setprecision(0) << val;
     }
     return oss.str();
+}
+
+// ==============================================================================
+// Multi-run Statistics / 多次运行统计
+// ==============================================================================
+
+struct MultiRunStats {
+    double avgThroughput = 0;
+    double minThroughput = 0;
+    double maxThroughput = 0;
+    double stdDev = 0;
+};
+
+MultiRunStats CalcMultiRunStats(const std::vector<double>& throughputs) {
+    MultiRunStats mrs;
+    if (throughputs.empty()) return mrs;
+    
+    size_t n = throughputs.size();
+    double sum = std::accumulate(throughputs.begin(), throughputs.end(), 0.0);
+    mrs.avgThroughput = sum / n;
+    
+    mrs.minThroughput = *std::min_element(throughputs.begin(), throughputs.end());
+    mrs.maxThroughput = *std::max_element(throughputs.begin(), throughputs.end());
+    
+    // Calculate standard deviation / 计算标准差
+    double sqSum = 0;
+    for (double t : throughputs) {
+        sqSum += (t - mrs.avgThroughput) * (t - mrs.avgThroughput);
+    }
+    mrs.stdDev = std::sqrt(sqSum / n);
+    
+    return mrs;
 }
 
 // ==============================================================================
@@ -620,12 +653,38 @@ Stats BenchSpdlogAsyncFileMT(const Config& cfg, const std::string& filename) {
 // Main / 主函数
 // ==============================================================================
 
-void PrintResult(const std::string& lib, const std::string& mode, const Stats& s) {
+void PrintResult(const std::string& lib, const std::string& mode, const MultiRunStats& mrs) {
     std::cout << "  " << std::left << std::setw(12) << lib
               << std::setw(20) << mode
-              << std::right << std::setw(12) << FormatThroughput(s.throughput) << " ops/sec"
-              << std::setw(10) << std::fixed << std::setprecision(0) << s.meanLatency << " ns"
-              << std::setw(10) << s.p99Latency << " ns\n";
+              << std::right << std::setw(10) << FormatThroughput(mrs.avgThroughput)
+              << " ± " << std::setw(6) << FormatThroughput(mrs.stdDev) << " ops/sec\n";
+}
+
+// Run benchmark multiple times and collect stats / 多次运行测试并收集统计
+template<typename BenchFunc>
+MultiRunStats RunMultiple(BenchFunc func, int runs) {
+    std::vector<double> throughputs;
+    throughputs.reserve(runs);
+    
+    for (int r = 0; r < runs; ++r) {
+        Stats s = func();
+        throughputs.push_back(s.throughput);
+    }
+    
+    return CalcMultiRunStats(throughputs);
+}
+
+template<typename BenchFunc>
+MultiRunStats RunMultipleWithArg(BenchFunc func, int runs, const std::string& arg) {
+    std::vector<double> throughputs;
+    throughputs.reserve(runs);
+    
+    for (int r = 0; r < runs; ++r) {
+        Stats s = func(arg);
+        throughputs.push_back(s.throughput);
+    }
+    
+    return CalcMultiRunStats(throughputs);
 }
 
 int main(int argc, char* argv[]) {
@@ -637,6 +696,8 @@ int main(int argc, char* argv[]) {
             cfg.iterations = std::atoi(argv[++i]);
         } else if (arg == "-t" && i + 1 < argc) {
             cfg.threads = std::atoi(argv[++i]);
+        } else if (arg == "-r" && i + 1 < argc) {
+            cfg.runs = std::atoi(argv[++i]);
         }
     }
 
@@ -650,6 +711,7 @@ int main(int argc, char* argv[]) {
     std::cout << "    Iterations / 迭代次数: " << cfg.iterations << "\n";
     std::cout << "    Threads / 线程数:      " << cfg.threads << "\n";
     std::cout << "    Warmup / 预热:         " << cfg.warmup << "\n";
+    std::cout << "    Runs / 运行次数:       " << cfg.runs << "\n";
     std::cout << "\n";
 
 #ifndef HAS_SPDLOG
@@ -660,77 +722,69 @@ int main(int argc, char* argv[]) {
 
     std::cout << "  " << std::left << std::setw(12) << "Library"
               << std::setw(20) << "Mode"
-              << std::right << std::setw(18) << "Throughput"
-              << std::setw(10) << "Mean"
-              << std::setw(10) << "P99\n";
-    std::cout << "  " << std::string(70, '-') << "\n";
+              << std::right << std::setw(24) << "Throughput (avg ± stddev)\n";
+    std::cout << "  " << std::string(60, '-') << "\n";
 
     // onePlog tests
     std::cout << "\n  [onePlog]\n";
     
-    std::cout << "  Running Sync...          \r" << std::flush;
-    auto oneplogSync = BenchOneplogSync(cfg);
+    auto oneplogSync = RunMultiple([&]() { return BenchOneplogSync(cfg); }, cfg.runs);
     PrintResult("onePlog", "Sync (1 Thread)", oneplogSync);
     
-    std::cout << "  Running Async...         \r" << std::flush;
-    auto oneplogAsync = BenchOneplogAsync(cfg);
+    auto oneplogAsync = RunMultiple([&]() { return BenchOneplogAsync(cfg); }, cfg.runs);
     PrintResult("onePlog", "Async (1 Thread)", oneplogAsync);
     
-    std::cout << "  Running Async MT...      \r" << std::flush;
-    auto oneplogAsyncMT = BenchOneplogAsyncMT(cfg);
+    auto oneplogAsyncMT = RunMultiple([&]() { return BenchOneplogAsyncMT(cfg); }, cfg.runs);
     PrintResult("onePlog", "Async (" + std::to_string(cfg.threads) + " Threads)", oneplogAsyncMT);
 
     // File output tests / 文件输出测试
     std::cout << "\n  [onePlog - File Output / 文件输出]\n";
     
-    std::cout << "  Running Sync File...     \r" << std::flush;
-    auto oneplogSyncFile = BenchOneplogSyncFile(cfg, "/tmp/oneplog_sync.log");
+    auto oneplogSyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogSyncFile(cfg, f); }, 
+                                               cfg.runs, "/tmp/oneplog_sync.log");
     PrintResult("onePlog", "Sync File", oneplogSyncFile);
     
-    std::cout << "  Running Async File...    \r" << std::flush;
-    auto oneplogAsyncFile = BenchOneplogAsyncFile(cfg, "/tmp/oneplog_async.log");
+    auto oneplogAsyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogAsyncFile(cfg, f); },
+                                                cfg.runs, "/tmp/oneplog_async.log");
     PrintResult("onePlog", "Async File", oneplogAsyncFile);
     
-    std::cout << "  Running Async File MT... \r" << std::flush;
-    auto oneplogAsyncFileMT = BenchOneplogAsyncFileMT(cfg, "/tmp/oneplog_async_mt.log");
+    auto oneplogAsyncFileMT = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogAsyncFileMT(cfg, f); },
+                                                  cfg.runs, "/tmp/oneplog_async_mt.log");
     PrintResult("onePlog", "Async File (" + std::to_string(cfg.threads) + "T)", oneplogAsyncFileMT);
 
 #ifdef HAS_SPDLOG
     // spdlog tests
     std::cout << "\n  [spdlog]\n";
     
-    std::cout << "  Running Sync...          \r" << std::flush;
-    auto spdlogSync = BenchSpdlogSync(cfg);
+    auto spdlogSync = RunMultiple([&]() { return BenchSpdlogSync(cfg); }, cfg.runs);
     PrintResult("spdlog", "Sync (1 Thread)", spdlogSync);
     
-    std::cout << "  Running Async...         \r" << std::flush;
-    auto spdlogAsync = BenchSpdlogAsync(cfg);
+    auto spdlogAsync = RunMultiple([&]() { return BenchSpdlogAsync(cfg); }, cfg.runs);
     PrintResult("spdlog", "Async (1 Thread)", spdlogAsync);
     
-    std::cout << "  Running Async MT...      \r" << std::flush;
-    auto spdlogAsyncMT = BenchSpdlogAsyncMT(cfg);
+    auto spdlogAsyncMT = RunMultiple([&]() { return BenchSpdlogAsyncMT(cfg); }, cfg.runs);
     PrintResult("spdlog", "Async (" + std::to_string(cfg.threads) + " Threads)", spdlogAsyncMT);
 
     // File output tests / 文件输出测试
     std::cout << "\n  [spdlog - File Output / 文件输出]\n";
     
-    std::cout << "  Running Sync File...     \r" << std::flush;
-    auto spdlogSyncFile = BenchSpdlogSyncFile(cfg, "/tmp/spdlog_sync.log");
+    auto spdlogSyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogSyncFile(cfg, f); },
+                                              cfg.runs, "/tmp/spdlog_sync.log");
     PrintResult("spdlog", "Sync File", spdlogSyncFile);
     
-    std::cout << "  Running Async File...    \r" << std::flush;
-    auto spdlogAsyncFile = BenchSpdlogAsyncFile(cfg, "/tmp/spdlog_async.log");
+    auto spdlogAsyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogAsyncFile(cfg, f); },
+                                               cfg.runs, "/tmp/spdlog_async.log");
     PrintResult("spdlog", "Async File", spdlogAsyncFile);
     
-    std::cout << "  Running Async File MT... \r" << std::flush;
-    auto spdlogAsyncFileMT = BenchSpdlogAsyncFileMT(cfg, "/tmp/spdlog_async_mt.log");
+    auto spdlogAsyncFileMT = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogAsyncFileMT(cfg, f); },
+                                                 cfg.runs, "/tmp/spdlog_async_mt.log");
     PrintResult("spdlog", "Async File (" + std::to_string(cfg.threads) + "T)", spdlogAsyncFileMT);
 
     // Summary comparison
     std::cout << "\n";
-    std::cout << "  " << std::string(70, '=') << "\n";
-    std::cout << "  Summary / 总结:\n";
-    std::cout << "  " << std::string(70, '-') << "\n";
+    std::cout << "  " << std::string(60, '=') << "\n";
+    std::cout << "  Summary / 总结 (based on " << cfg.runs << " runs average):\n";
+    std::cout << "  " << std::string(60, '-') << "\n";
     
     auto ratio = [](double a, double b) {
         if (b == 0) return 0.0;
@@ -739,25 +793,25 @@ int main(int argc, char* argv[]) {
     
     std::cout << std::fixed << std::setprecision(1);
     std::cout << "  Sync Mode:   onePlog " 
-              << (oneplogSync.throughput >= spdlogSync.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogSync.throughput, spdlogSync.throughput)) << "%\n";
+              << (oneplogSync.avgThroughput >= spdlogSync.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogSync.avgThroughput, spdlogSync.avgThroughput)) << "%\n";
     std::cout << "  Async Mode:  onePlog "
-              << (oneplogAsync.throughput >= spdlogAsync.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsync.throughput, spdlogAsync.throughput)) << "%\n";
+              << (oneplogAsync.avgThroughput >= spdlogAsync.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogAsync.avgThroughput, spdlogAsync.avgThroughput)) << "%\n";
     std::cout << "  Async " << cfg.threads << "T:   onePlog "
-              << (oneplogAsyncMT.throughput >= spdlogAsyncMT.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsyncMT.throughput, spdlogAsyncMT.throughput)) << "%\n";
+              << (oneplogAsyncMT.avgThroughput >= spdlogAsyncMT.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogAsyncMT.avgThroughput, spdlogAsyncMT.avgThroughput)) << "%\n";
     
     std::cout << "\n  File Output / 文件输出:\n";
     std::cout << "  Sync File:   onePlog "
-              << (oneplogSyncFile.throughput >= spdlogSyncFile.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogSyncFile.throughput, spdlogSyncFile.throughput)) << "%\n";
+              << (oneplogSyncFile.avgThroughput >= spdlogSyncFile.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogSyncFile.avgThroughput, spdlogSyncFile.avgThroughput)) << "%\n";
     std::cout << "  Async File:  onePlog "
-              << (oneplogAsyncFile.throughput >= spdlogAsyncFile.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsyncFile.throughput, spdlogAsyncFile.throughput)) << "%\n";
+              << (oneplogAsyncFile.avgThroughput >= spdlogAsyncFile.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogAsyncFile.avgThroughput, spdlogAsyncFile.avgThroughput)) << "%\n";
     std::cout << "  Async File " << cfg.threads << "T: onePlog "
-              << (oneplogAsyncFileMT.throughput >= spdlogAsyncFileMT.throughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsyncFileMT.throughput, spdlogAsyncFileMT.throughput)) << "%\n";
+              << (oneplogAsyncFileMT.avgThroughput >= spdlogAsyncFileMT.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogAsyncFileMT.avgThroughput, spdlogAsyncFileMT.avgThroughput)) << "%\n";
 #endif
 
     std::cout << "\n================================================================\n";
