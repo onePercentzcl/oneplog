@@ -14,7 +14,40 @@
 
 ## 快速开始
 
-### 构建
+### 在其他项目中使用 oneplog
+
+#### 方式 1：Git Submodule（推荐）
+
+```bash
+# 添加 submodule
+git submodule add https://github.com/onePercentzcl/oneplog.git third_party/oneplog
+```
+
+**CMake：**
+```cmake
+add_subdirectory(third_party/oneplog)
+target_link_libraries(your_target PRIVATE oneplog)
+```
+
+**XMake：**
+```lua
+includes("third_party/oneplog")
+target("your_target")
+    add_deps("oneplog")
+```
+
+#### 方式 2：CMake FetchContent
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(oneplog
+    GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
+    GIT_TAG main)
+FetchContent_MakeAvailable(oneplog)
+target_link_libraries(your_target PRIVATE oneplog)
+```
+
+### 构建 oneplog 本身
 
 使用 XMake：
 ```bash

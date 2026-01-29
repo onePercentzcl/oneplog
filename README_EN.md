@@ -14,7 +14,40 @@ High Performance C++17 Multi-Process Logging System
 
 ## Quick Start
 
-### Build
+### Using oneplog in Your Project
+
+#### Method 1: Git Submodule (Recommended)
+
+```bash
+# Add submodule
+git submodule add https://github.com/onePercentzcl/oneplog.git third_party/oneplog
+```
+
+**CMake:**
+```cmake
+add_subdirectory(third_party/oneplog)
+target_link_libraries(your_target PRIVATE oneplog)
+```
+
+**XMake:**
+```lua
+includes("third_party/oneplog")
+target("your_target")
+    add_deps("oneplog")
+```
+
+#### Method 2: CMake FetchContent
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(oneplog
+    GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
+    GIT_TAG main)
+FetchContent_MakeAvailable(oneplog)
+target_link_libraries(your_target PRIVATE oneplog)
+```
+
+### Building oneplog Itself
 
 Using XMake:
 ```bash
