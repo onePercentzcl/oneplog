@@ -1,0 +1,325 @@
+# 实现计划：onePlog 多进程日志系统
+
+## 概述
+
+基于设计文档实现 onePlog 高性能 C++17 多进程日志系统，支持同步、异步和多进程三种模式。
+
+## 任务列表
+
+- [x] 1. 项目基础设施搭建
+  - [x] 1.1 创建项目目录结构（include/、src/、tests/、example/）
+    - _需求: 项目规范_
+  - [x] 1.2 创建 CMakeLists.txt 构建文件
+    - _需求: 项目规范_
+  - [x] 1.3 创建 xmake.lua 构建文件
+    - _需求: 项目规范_
+  - [x] 1.4 创建 .clang-format 配置文件
+    - _需求: 项目规范_
+  - [x] 1.5 创建 Doxyfile 文档配置
+    - _需求: 项目规范_
+
+- [x] 2. 核心类型和枚举定义
+  - [x] 2.1 实现 Level 枚举和 LevelNameStyle 枚举
+    - 包含 Trace/Debug/Info/Warn/Error/Critical/Off
+    - 实现 LevelToString 函数（Full/Short4/Short1）
+    - _需求: 1.1, 1.2_
+  - [x] 2.2 实现 Mode 枚举（Sync/Async/MProc）
+    - _需求: 2, 3, 4_
+  - [x] 2.3 实现 SlotState 枚举和 SlotStatus 结构
+    - Empty/Writing/Ready/Reading 状态
+    - wfc 标志
+    - _需求: 3.5, 4.8_
+  - [x] 2.4 实现 ErrorCode 枚举
+    - _需求: 15_
+  - [x]* 2.5 编写 Level 枚举单元测试
+    - **Property 1: 日志级别格式化一致性**
+    - **验证: 需求 1.2**
+
+- [x] 3. BinarySnapshot 实现
+  - [x] 3.1 实现 TypeTag 枚举和基础结构
+    - 定义类型标签（Int32/Int64/Float/Double/Bool/StringView/StringCopy 等）
+    - _需求: 5.5_
+  - [x] 3.2 实现基本类型捕获方法
+    - CaptureInt32/CaptureInt64/CaptureFloat/CaptureDouble/CaptureBool
+    - _需求: 5.2_
+  - [x] 3.3 实现字符串类型捕获方法
+    - CaptureStringView（零拷贝）和 CaptureString（内联拷贝）
+    - _需求: 5.3, 5.4_
+  - [x] 3.4 实现变参模板 Capture 方法
+    - _需求: 5.1_
+  - [x] 3.5 实现序列化和反序列化方法
+    - SerializedSize/SerializeTo/Deserialize
+    - _需求: 5.6_
+  - [x] 3.6 实现 Format 方法（格式化输出）
+    - _需求: 5.1_
+  - [x] 3.7 实现 ConvertPointersToData 方法（Pipeline 调用）
+    - _需求: 4.3_
+  - [x]* 3.8 编写 BinarySnapshot 属性测试
+    - **Property 4: BinarySnapshot 类型捕获完整性**
+    - **Property 5: BinarySnapshot 序列化往返一致性**
+    - **验证: 需求 5.1, 5.2, 5.3, 5.6**
+
+- [x] 4. LogEntry 实现
+  - [x] 4.1 实现 SourceLocation 结构
+    - _需求: 6.3_
+  - [x] 4.2 实现 LogEntryDebug 结构（优化内存布局）
+    - timestamp/file/function/threadId/processId/line/level/snapshot
+    - _需求: 6.1-6.6_
+  - [x] 4.3 实现 LogEntryRelease 结构（精简版）
+    - timestamp/threadId/processId/level/snapshot
+    - _需求: 6.1, 6.2, 6.4, 6.5_
+  - [x] 4.4 实现 ONEPLOG_CURRENT_LOCATION 宏
+    - _需求: 6.3_
+  - [ ]* 4.5 编写 LogEntry 单元测试
+    - 验证内存布局和字段正确性
+    - _需求: 6_
+
+- [ ] 5. Checkpoint - 核心类型完成
+  - 确保所有测试通过，如有问题请询问用户
+
+- [ ] 6. HeapRingBuffer 实现
+  - [ ] 6.1 实现 CacheLineAligned 模板和缓存行大小检测
+    - 编译时自动识别 cacheline 大小
+    - _需求: 7.3, 7.4_
+  - [ ] 6.2 实现 HeapRingBuffer 基础结构
+    - head/tail 原子变量独占缓存行
+    - SlotStatus 数组
+    - _需求: 7.1, 7.3_
+  - [ ] 6.3 实现 AcquireSlot 和 CommitSlot 方法
+    - 抢占索引再写入
+    - _需求: 7.1_
+  - [ ] 6.4 实现 TryPush 和 TryPushWFC 方法
+    - _需求: 3.1, 3.5_
+  - [ ] 6.5 实现 TryPop 和 TryPopBatch 方法
+    - _需求: 7.7_
+  - [ ] 6.6 实现 WFC 支持方法
+    - MarkWFCComplete/WaitForCompletion
+    - 状态转换：Empty→Writing→Ready→Reading→Empty
+    - _需求: 3.5_
+  - [ ] 6.7 实现 EventFD 通知机制
+    - GetEventFD/NotifyConsumer/WaitForData
+    - _需求: 3.6, 7.5_
+  - [ ]* 6.8 编写 HeapRingBuffer 属性测试
+    - **Property 6: HeapRingBuffer FIFO 顺序保证**
+    - **验证: 需求 7.8**
+
+- [ ] 7. SharedRingBuffer 实现
+  - [ ] 7.1 实现 SharedHeader 结构
+    - head/tail/capacity/version/logLevel
+    - 进程/线程名称-ID 对照表
+    - _需求: 4.1_
+  - [ ] 7.2 实现 Create 静态方法（主进程创建共享内存）
+    - _需求: 4.6_
+  - [ ] 7.3 实现 Connect 静态方法（子进程连接）
+    - _需求: 4.6_
+  - [ ] 7.4 实现 RegisterProcess/RegisterThread 方法
+    - _需求: 4.3_
+  - [ ] 7.5 实现 AcquireSlot/CommitSlot/TryPush/TryPushWFC 方法
+    - _需求: 4.4_
+  - [ ] 7.6 实现 TryPop/TryPopBatch 方法
+    - _需求: 4.4_
+  - [ ] 7.7 实现 WFC 支持方法
+    - _需求: 4.8_
+  - [ ] 7.8 实现通知机制（EventFD/UDS）
+    - fork 用 EventFD，非 fork 用 UDS
+    - _需求: 4.7_
+  - [ ]* 7.9 编写 SharedRingBuffer 属性测试
+    - **Property 10: 多进程队列无数据竞争**
+    - **验证: 需求 4.2, 4.5**
+
+- [ ] 8. Checkpoint - 队列实现完成
+  - 确保所有测试通过，如有问题请询问用户
+
+- [ ] 9. Format 实现
+  - [ ] 9.1 实现 Format 基类
+    - FormatEntry 虚方法
+    - LevelToString 静态方法
+    - _需求: 8.3_
+  - [ ] 9.2 实现 PatternFormat 类
+    - 模式字符串解析（%t/%l/%f/%n/%F/%T/%P/%N/%M/%m）
+    - SetLevelStyle/SetTimestampFormat
+    - _需求: 8.1, 8.2, 8.4, 8.5_
+  - [ ] 9.3 实现 JsonFormat 类
+    - SetPrettyPrint/SetIncludeLocation
+    - _需求: 8.6_
+  - [ ]* 9.4 编写 Format 属性测试
+    - **Property 7: LogEntry 格式化非空性**
+    - **验证: 需求 8.7**
+
+- [ ] 10. Sink 实现
+  - [ ] 10.1 实现 Sink 基类
+    - Write/WriteBatch/Flush/Close
+    - 多线程支持：StartThread/StopThread
+    - _需求: 9.5_
+  - [ ] 10.2 实现 ConsoleSink 类
+    - stdout/stderr 输出
+    - 颜色支持
+    - _需求: 9.1_
+  - [ ] 10.3 实现 FileSink 类
+    - 文件写入
+    - 文件轮转（按大小/按文件数）
+    - _需求: 9.2, 9.3_
+  - [ ] 10.4 实现 NetworkSink 类
+    - TCP/UDP 输出
+    - 重连机制
+    - _需求: 9.4_
+  - [ ]* 10.5 编写 Sink 单元测试
+    - 测试文件写入、轮转、错误处理
+    - _需求: 9.6_
+
+- [ ] 11. PipelineThread 实现
+  - [ ] 11.1 实现 PipelineThread 基础结构
+    - 构造函数接收 HeapRingBuffer 和 SharedRingBuffer 引用
+    - _需求: 4.1_
+  - [ ] 11.2 实现 Start/Stop/IsRunning 方法
+    - _需求: 4.6_
+  - [ ] 11.3 实现 ThreadFunc 主循环
+    - 轮询等待（默认 10ms/1us）
+    - 超时后进入等待通知状态
+    - _需求: 7.5_
+  - [ ] 11.4 实现 ProcessEntry 方法
+    - 调用 ConvertPointers 和 AddProcessId
+    - _需求: 4.3_
+  - [ ] 11.5 实现 WFC 处理逻辑
+    - 转发 WFC 日志后阻塞等待
+    - _需求: 4.8_
+  - [ ]* 11.6 编写 PipelineThread 属性测试
+    - **Property 11: Pipeline 指针转换正确性**
+    - **验证: 需求 4.3, 4.6**
+
+- [ ] 12. WriterThread 实现
+  - [ ] 12.1 实现 WriterThread 基础结构
+    - 构造函数接收 Sink
+    - SetHeapRingBuffer/SetSharedRingBuffer
+    - _需求: 3.2_
+  - [ ] 12.2 实现 Start/Stop/Flush/IsRunning 方法
+    - _需求: 3.2_
+  - [ ] 12.3 实现 ThreadFunc 主循环
+    - 轮询等待逻辑
+    - _需求: 7.5_
+  - [ ] 12.4 实现 ProcessEntry 方法
+    - 调用 Format 和 Sink
+    - _需求: 3.2_
+  - [ ] 12.5 实现 WFC 处理逻辑
+    - 完成后重置状态位
+    - _需求: 3.5_
+  - [ ]* 12.6 编写 WriterThread 单元测试
+    - 测试日志输出和 WFC 完成
+    - _需求: 3.2, 3.5_
+
+- [ ] 13. Checkpoint - 线程实现完成
+  - 确保所有测试通过，如有问题请询问用户
+
+- [ ] 14. Logger 实现
+  - [ ] 14.1 实现 Logger 基础结构
+    - 构造函数（name, mode = Async）
+    - Name/GetMode/GetLevel/SetLevel
+    - _需求: 1.3, 1.4_
+  - [ ] 14.2 实现 Init 方法
+    - 根据模式初始化 HeapRingBuffer/PipelineThread/WriterThread
+    - _需求: 2.1, 3.1, 4.1_
+  - [ ] 14.3 实现 SetSink/AddSink 方法
+    - _需求: 9_
+  - [ ] 14.4 实现 Log 模板方法
+    - 创建 BinarySnapshot 和 LogEntry
+    - 根据模式选择同步/异步处理
+    - _需求: 2.1, 3.1_
+  - [ ] 14.5 实现 Trace/Debug/Info/Warn/Error/Critical 方法
+    - _需求: 10.2_
+  - [ ] 14.6 实现 TraceWFC/DebugWFC/InfoWFC/WarnWFC/ErrorWFC/CriticalWFC 方法
+    - _需求: 10.3_
+  - [ ] 14.7 实现 Flush/Shutdown 方法
+    - _需求: 16.1, 16.2_
+  - [ ]* 14.8 编写 Logger 属性测试
+    - **Property 2: 日志级别过滤正确性**
+    - **Property 3: 同步模式顺序保证**
+    - **验证: 需求 1.3, 2.2**
+
+- [ ] 15. 全局 API 实现
+  - [ ] 15.1 实现 DefaultLogger/SetDefaultLogger 函数
+    - _需求: 10.2_
+  - [ ] 15.2 实现全局便捷函数
+    - oneplog::Trace/Debug/Info/Warn/Error/Critical
+    - _需求: 10.2_
+  - [ ] 15.3 实现全局 WFC 函数
+    - oneplog::TraceWFC/DebugWFC/InfoWFC/WarnWFC/ErrorWFC/CriticalWFC
+    - _需求: 10.3_
+  - [ ] 15.4 实现 InitProducer 函数（多进程子进程初始化）
+    - _需求: 4.6_
+  - [ ] 15.5 实现 SetProcessName/SetModuleName 函数
+    - _需求: 4.3_
+  - [ ] 15.6 实现全局 SetLevel/Flush/Shutdown 函数
+    - _需求: 1.4, 16_
+  - [ ]* 15.7 编写全局 API 单元测试
+    - _需求: 10_
+
+- [ ] 16. 宏定义实现
+  - [ ] 16.1 实现 ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL 宏
+    - _需求: 10.1_
+  - [ ] 16.2 实现 ONEPLOG_TRACE_WFC 等 WFC 宏
+    - _需求: 10.3_
+  - [ ] 16.3 实现 ONEPLOG_IF 条件日志宏
+    - _需求: 10.4_
+  - [ ] 16.4 实现编译时禁用宏
+    - ONEPLOG_DISABLE_TRACE/DEBUG 等
+    - _需求: 17.1, 10.5_
+  - [ ] 16.5 实现 ONEPLOG_SYNC_ONLY 宏
+    - _需求: 2.3, 17.2_
+  - [ ]* 16.6 编写宏定义单元测试
+    - _需求: 10, 17_
+
+- [ ] 17. MemoryPool 实现
+  - [ ] 17.1 实现 MemoryPool 模板类
+    - 预分配固定大小内存块
+    - _需求: 11.1, 11.2_
+  - [ ] 17.2 实现 Allocate/Deallocate 方法
+    - 无锁分配和释放
+    - _需求: 11.1_
+  - [ ] 17.3 实现 AvailableCount/TotalCount 方法
+    - _需求: 11.3_
+  - [ ]* 17.4 编写 MemoryPool 属性测试
+    - **Property 8: 内存池分配重用性**
+    - **验证: 需求 11.4**
+
+- [ ] 18. Checkpoint - 核心功能完成
+  - 确保所有测试通过，如有问题请询问用户
+
+- [ ] 19. 并发测试
+  - [ ]* 19.1 编写多线程并发写入测试
+    - **Property 9: 多线程并发安全性**
+    - **验证: 需求 12.1, 12.2, 12.3, 12.4**
+  - [ ]* 19.2 编写 WFC 完成保证测试
+    - **Property 12: WFC 完成保证**
+    - **验证: 需求 3.5, 4.8**
+
+- [ ] 20. 示例代码
+  - [ ] 20.1 创建同步模式示例（example/sync_example.cpp）
+    - _需求: 2_
+  - [ ] 20.2 创建异步模式示例（example/async_example.cpp）
+    - _需求: 3_
+  - [ ] 20.3 创建多进程模式示例（example/mproc_example.cpp）
+    - _需求: 4_
+  - [ ] 20.4 创建 WFC 日志示例（example/wfc_example.cpp）
+    - _需求: 3.5, 4.8_
+
+- [ ] 21. 文档更新
+  - [ ] 21.1 创建 README.md（中文版）
+    - 项目介绍、安装说明、使用示例
+    - _需求: 项目规范_
+  - [ ] 21.2 创建 README_ENGLISH.md（英文版）
+    - _需求: 项目规范_
+  - [ ] 21.3 生成 Doxygen API 文档
+    - _需求: 项目规范_
+
+- [ ] 22. 最终检查点
+  - 确保所有测试通过
+  - 确保文档完整
+  - 如有问题请询问用户
+
+## 注意事项
+
+- 任务标记 `*` 的为可选测试任务
+- 每个属性测试至少运行 100 次迭代
+- 使用 Google Test + RapidCheck 进行测试
+- 遵循项目命名规范（snake_case 文件名、PascalCase 类名等）
+- 每完成一个主要任务后更新 README 文档并提交代码

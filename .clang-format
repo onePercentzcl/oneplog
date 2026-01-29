@@ -1,0 +1,100 @@
+# ==============================================================================
+# onePlog Code Style Configuration
+# onePlog 代码风格配置
+# ==============================================================================
+
+# Base style / 基础风格
+BasedOnStyle: Google
+
+# Indentation / 缩进
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
+NamespaceIndentation: None
+
+# Line width / 行宽
+ColumnLimit: 100
+
+# Braces / 大括号
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: false
+  BeforeElse: false
+  IndentBraces: false
+
+# Functions / 函数
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: Yes
+
+# Arguments and parameters / 参数
+BinPackArguments: true
+BinPackParameters: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+# Alignment / 对齐
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+
+# Spaces / 空格
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Includes / 头文件包含
+IncludeBlocks: Regroup
+IncludeCategories:
+  # oneplog headers / oneplog 头文件
+  - Regex: '^<oneplog/'
+    Priority: 1
+  # C++ standard library / C++ 标准库
+  - Regex: '^<[a-z_]+>'
+    Priority: 2
+  # System headers / 系统头文件
+  - Regex: '^<'
+    Priority: 3
+  # Local headers / 本地头文件
+  - Regex: '^"'
+    Priority: 4
+SortIncludes: true
+
+# Pointers and references / 指针和引用
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+# Other / 其他
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+MaxEmptyLinesToKeep: 1
+ReflowComments: true
+SortUsingDeclarations: true
+Standard: c++17

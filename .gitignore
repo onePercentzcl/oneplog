@@ -1,0 +1,36 @@
+# Build directories / 构建目录
+build/
+.build/
+cmake-build-*/
+out/
+
+# XMake
+.xmake/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled files / 编译文件
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Documentation / 文档
+docs/api/
+
+# OS files / 系统文件
+.DS_Store
+Thumbs.db
+
+# Test output / 测试输出
+Testing/
+*.log
