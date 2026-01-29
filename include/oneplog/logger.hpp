@@ -254,6 +254,9 @@ public:
         m_heapRingBuffer.reset();
         m_sharedMemory.reset();
 
+        // Shutdown NameManager / 关闭 NameManager
+        NameManager<EnableWFC>::Shutdown();
+
         m_initialized = false;
     }
 
@@ -558,6 +561,14 @@ private:
         
         if (m_initialized) {
             return;
+        }
+
+        // Initialize NameManager for name resolution / 初始化 NameManager 用于名称解析
+        NameManager<EnableWFC>::Initialize(M, nullptr);
+        
+        // Set process name if provided / 如果提供了进程名则设置
+        if (!config.processName.empty()) {
+            NameManager<EnableWFC>::SetProcessName(config.processName);
         }
 
         if constexpr (M == Mode::Sync) {

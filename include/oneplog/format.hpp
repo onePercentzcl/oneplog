@@ -409,9 +409,10 @@ public:
         req.needsTimestamp = true;
         req.needsLevel = true;
 #ifdef NDEBUG
-        // Release mode doesn't need thread/process ID
-        req.needsThreadId = false;
-        req.needsProcessId = false;
+        // Release mode: need thread/process ID for dynamic name resolution
+        // Release 模式：动态名称解析需要线程/进程 ID
+        req.needsThreadId = m_useDynamicNames;
+        req.needsProcessId = m_useDynamicNames;
         req.needsSourceLocation = false;
 #else
         // Debug mode needs thread/process ID

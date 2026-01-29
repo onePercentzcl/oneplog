@@ -111,10 +111,13 @@ void RunProcess(int processId, const std::string& processName) {
     oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug, false> logger;
     
     auto format = std::make_shared<oneplog::ConsoleFormat>();
-    format->SetProcessName(processName);
     logger.SetFormat(format);
     logger.SetSink(std::make_shared<oneplog::ConsoleSink>());
     logger.Init();
+    
+    // Set process name using NameManager (for dynamic name resolution)
+    // 使用 NameManager 设置进程名（用于动态名称解析）
+    oneplog::NameManager<false>::SetProcessName(processName);
     
     g_logger = &logger;
     
