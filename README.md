@@ -47,41 +47,23 @@ FetchContent_MakeAvailable(oneplog)
 target_link_libraries(your_target PRIVATE oneplog)
 ```
 
-#### 方式 3：XMake 远程包
+#### 方式 3：XMake 远程包（推荐）
 
-在项目根目录创建 `xmake.lua`：
 ```lua
+-- xmake.lua
 add_rules("mode.debug", "mode.release")
 set_languages("c++17")
 
--- 添加 oneplog 远程包
-add_requires("oneplog", {configs = {shared = false}})
+-- 添加 onePercent 仓库
+add_repositories("onePercent-repo https://github.com/onePercentzcl/xmake-repo")
+
+-- 添加 oneplog 依赖
+add_requires("oneplog")
 
 target("your_target")
     set_kind("binary")
     add_files("src/*.cpp")
     add_packages("oneplog")
-```
-
-然后在项目中创建 `xmake-repo/packages/o/oneplog/xmake.lua`：
-```lua
-package("oneplog")
-    set_homepage("https://github.com/onePercentzcl/oneplog")
-    set_description("High performance C++17 multi-process logging system")
-    
-    add_urls("https://github.com/onePercentzcl/oneplog.git")
-    add_versions("v0.0.1", "v0.0.1")
-    
-    on_install(function (package)
-        os.cp("include", package:installdir())
-        os.cp("src", package:installdir())
-    end)
-package_end()
-```
-
-并在主 `xmake.lua` 中添加：
-```lua
-add_repositories("local-repo xmake-repo")
 ```
 
 ### 构建 oneplog 本身
