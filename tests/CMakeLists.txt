@@ -32,6 +32,7 @@ set(TEST_SOURCES
     test_binary_snapshot.cpp
     test_log_entry.cpp
     test_heap_ring_buffer.cpp
+    test_name_manager.cpp
 )
 
 # ==============================================================================
@@ -51,6 +52,9 @@ target_include_directories(oneplog_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${rapidcheck_SOURCE_DIR}/extras/gtest/include
 )
+
+# Enable RapidCheck property-based testing / 启用 RapidCheck 属性测试
+target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_HAS_RAPIDCHECK)
 
 # ==============================================================================
 # Register Tests / 注册测试

@@ -21,39 +21,30 @@ int main() {
     std::cout << "=== onePlog 异步模式示例 ===" << std::endl;
     std::cout << std::endl;
 
-    // Create a logger in async mode (default)
-    // 创建异步模式的日志器（默认）
-    auto logger = std::make_shared<oneplog::Logger>("async_logger", oneplog::Mode::Async);
-
-    // Create a console sink
-    // 创建控制台输出
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-
-    // Set log level
-    // 设置日志级别
-    logger->SetLevel(oneplog::Level::Debug);
-
-    // Configure with custom settings
-    // 使用自定义设置配置
+    // Initialize with async mode and process name
+    // 使用异步模式和进程名初始化
     oneplog::LoggerConfig config;
     config.mode = oneplog::Mode::Async;
-    config.heapRingBufferSize = 1024;  // Buffer size / 缓冲区大小
+    config.level = oneplog::Level::Debug;
+    config.processName = "async_app";  // Set process name / 设置进程名
+    oneplog::Init(config);
 
-    // Initialize the logger
-    // 初始化日志器
-    logger->Init(config);
+    std::cout << "--- Process/Module Name Demo / 进程名/模块名演示 ---" << std::endl;
 
-    // Set as default logger
-    // 设置为默认日志器
-    oneplog::SetDefaultLogger(logger);
+    // Set module name for main thread / 设置主线程的模块名
+    oneplog::NameManager::SetModuleName("main");
+    
+    log::Info("Async mode initialized with process={}, module={}", 
+              oneplog::NameManager::GetProcessName(),
+              oneplog::NameManager::GetModuleName());
 
+    std::cout << std::endl;
     std::cout << "--- Async Logging / 异步日志 ---" << std::endl;
 
-    // Log messages (they will be processed asynchronously)
-    // 记录日志（它们将被异步处理）
+    // Log messages using log:: class
+    // 使用 log:: 类记录日志
     for (int i = 0; i < 10; ++i) {
-        logger->Info("Async message {}", i);
+        log::Info("Async message {}", i);
     }
 
     std::cout << "All messages queued, waiting for processing..." << std::endl;
@@ -64,38 +55,22 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << std::endl;
-    std::cout << "--- High Throughput Test / 高吞吐量测试 ---" << std::endl;
+    std::cout << "--- Multi-threaded with Module Names / 多线程模块名 ---" << std::endl;
 
-    // High throughput logging
-    // 高吞吐量日志
-    auto start = std::chrono::high_resolution_clock::now();
-
-    constexpr int kMessageCount = 1000;
-    for (int i = 0; i < kMessageCount; ++i) {
-        logger->Debug("High throughput message {}", i);
-    }
-
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-
-    std::cout << "Queued " << kMessageCount << " messages in " << duration.count() << " us" << std::endl;
-    std::cout << "入队 " << kMessageCount << " 条消息耗时 " << duration.count() << " 微秒" << std::endl;
-    std::cout << "Average: " << (duration.count() / kMessageCount) << " us per message" << std::endl;
-    std::cout << "平均: 每条消息 " << (duration.count() / kMessageCount) << " 微秒" << std::endl;
-
-    std::cout << std::endl;
-    std::cout << "--- Multi-threaded Logging / 多线程日志 ---" << std::endl;
-
-    // Multi-threaded logging
-    // 多线程日志
+    // Multi-threaded logging with different module names
+    // 使用不同模块名的多线程日志
     constexpr int kThreadCount = 4;
-    constexpr int kMessagesPerThread = 100;
+    constexpr int kMessagesPerThread = 10;
+    const char* moduleNames[] = {"network", "database", "cache", "worker"};
 
     std::vector<std::thread> threads;
     for (int t = 0; t < kThreadCount; ++t) {
-        threads.emplace_back([&logger, t]() {
+        threads.emplace_back([t, &moduleNames]() {
+            // Set module name for this thread / 设置此线程的模块名
+            oneplog::NameManager::SetModuleName(moduleNames[t]);
+            
             for (int i = 0; i < kMessagesPerThread; ++i) {
-                logger->Info("Thread {} message {}", t, i);
+                log::Info("[{}] Processing task {}", moduleNames[t], i);
             }
         });
     }
@@ -111,7 +86,27 @@ int main() {
 
     // Flush to ensure all messages are written
     // 刷新以确保所有消息都被写入
-    logger->Flush();
+    log::Flush();
+
+    std::cout << std::endl;
+    std::cout << "--- High Throughput Test / 高吞吐量测试 ---" << std::endl;
+
+    // High throughput logging
+    // 高吞吐量日志
+    auto start = std::chrono::high_resolution_clock::now();
+
+    constexpr int kMessageCount = 1000;
+    for (int i = 0; i < kMessageCount; ++i) {
+        log::Debug("High throughput message {}", i);
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+    std::cout << "Queued " << kMessageCount << " messages in " << duration.count() << " us" << std::endl;
+    std::cout << "入队 " << kMessageCount << " 条消息耗时 " << duration.count() << " 微秒" << std::endl;
+    std::cout << "Average: " << (duration.count() / kMessageCount) << " us per message" << std::endl;
+    std::cout << "平均: 每条消息 " << (duration.count() / kMessageCount) << " 微秒" << std::endl;
 
     std::cout << std::endl;
     std::cout << "--- Using Global Functions / 使用全局函数 ---" << std::endl;
@@ -122,9 +117,7 @@ int main() {
     oneplog::Warn("Global warning message");
     oneplog::Error("Global error message");
 
-    // Flush and shutdown
-    // 刷新并关闭
-    oneplog::Flush();
+    // Shutdown / 关闭
     oneplog::Shutdown();
 
     std::cout << std::endl;

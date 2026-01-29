@@ -34,22 +34,21 @@ make
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // 创建日志器
-    auto logger = std::make_shared<oneplog::Logger>("my_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
-    oneplog::SetDefaultLogger(logger);
+    // 一行初始化（异步模式 + 控制台输出）
+    oneplog::Init();
     
-    // 记录日志
-    logger->Info("Hello, {}!", "onePlog");
-    logger->Error("Error code: {}", 42);
+    // 使用 log:: 静态类记录日志
+    log::Info("Hello, {}!", "onePlog");
+    log::Error("Error code: {}", 42);
+    
+    // 或使用全局函数
+    oneplog::Info("Global function style");
     
     // 使用宏
     ONEPLOG_INFO("Macro logging: {}", "test");
     
     // 关闭
-    logger->Flush();
+    oneplog::Shutdown();
     return 0;
 }
 ```
@@ -62,15 +61,17 @@ int main() {
 int main() {
     // 使用自定义配置初始化
     oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::Async;
-    config.heapRingBufferSize = 8192;
+    config.mode = oneplog::Mode::Sync;  // 同步模式
+    config.level = oneplog::Level::Debug;
+    oneplog::Init(config);
     
-    auto logger = std::make_shared<oneplog::Logger>("my_logger");
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init(config);
+    // 动态修改 Sink 和 Format
+    oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log"));
+    oneplog::SetFormat(std::make_shared<oneplog::FileFormat>());
     
-    logger->Info("Custom logger message");
+    log::Info("Custom logger message");
     
+    oneplog::Shutdown();
     return 0;
 }
 ```
@@ -85,6 +86,102 @@ int main() {
 | Warn | warn | WARN | W | 黄色 |
 | Error | error | ERRO | E | 红色 |
 | Critical | critical | CRIT | C | 紫色 |
+
+## 进程名/模块名管理
+
+onePlog 支持为日志设置进程名和模块名，便于在多进程、多线程环境中识别日志来源。
+
+### 设置进程名
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    // 方式 1：通过配置设置进程名
+    oneplog::LoggerConfig config;
+    config.processName = "my_app";
+    oneplog::Init(config);
+    
+    // 方式 2：初始化后设置
+    oneplog::NameManager::SetProcessName("my_app");
+    
+    // 获取进程名
+    std::string name = oneplog::NameManager::GetProcessName();
+    
+    log::Info("Process name: {}", name);
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### 设置模块名
+
+每个线程可以设置自己的模块名：
+
+```cpp
+#include <oneplog/oneplog.hpp>
+#include <thread>
+
+int main() {
+    oneplog::LoggerConfig config;
+    config.processName = "my_app";
+    oneplog::Init(config);
+    
+    // 主线程设置模块名
+    oneplog::NameManager::SetModuleName("main");
+    log::Info("Main thread message");
+    
+    // 工作线程设置不同的模块名
+    std::thread worker([]() {
+        oneplog::NameManager::SetModuleName("worker");
+        log::Info("Worker thread message");
+    });
+    worker.join();
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### 模块名继承
+
+使用 `ThreadWithModuleName` 创建线程时，子线程会自动继承父线程的模块名：
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    oneplog::Init();
+    
+    // 设置父线程模块名
+    oneplog::NameManager::SetModuleName("supervisor");
+    
+    // 子线程自动继承 "supervisor" 模块名
+    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+        // GetModuleName() 返回 "supervisor"
+        log::Info("Child module: {}", oneplog::NameManager::GetModuleName());
+    });
+    childThread.join();
+    
+    // 也可以为子线程指定特定的模块名
+    auto namedThread = oneplog::ThreadWithModuleName::CreateWithName("custom_module", []() {
+        log::Info("Custom module: {}", oneplog::NameManager::GetModuleName());
+    });
+    namedThread.join();
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### 三种模式下的名称存储
+
+| 模式 | 进程名存储 | 模块名存储 |
+|------|-----------|-----------|
+| Sync | thread_local | thread_local |
+| Async | 全局变量 | 堆上的 TID-模块名映射表 |
+| MProc | 共享内存 | 共享内存 |
 
 ## 运行模式
 
@@ -126,51 +223,47 @@ Release 模式输出（带颜色）：
 #include <sys/wait.h>
 
 void RunChildProcess(int childId) {
-    // 子进程必须创建新的日志器
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
+    // 子进程使用同步模式初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     // 设置进程名称以便识别
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("child" + std::to_string(childId));
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
     // 记录日志
-    logger->Info("[Child {}] Message", childId);
-    logger->Flush();
+    log::Info("[Child {}] Message", childId);
+    log::Flush();
 }
 
 int main() {
-    // 父进程日志器
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
+    // 父进程使用同步模式初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("parent");
-    logger->SetFormat(format);
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // 子进程
+        // 子进程 - 重新初始化
+        oneplog::Shutdown();
         RunChildProcess(0);
         _exit(0);  // 使用 _exit 避免刷新父进程缓冲区
     } else if (pid > 0) {
         // 父进程
-        logger->Info("[Parent] Message");
+        log::Info("[Parent] Message");
         
         int status;
         waitpid(pid, &status, 0);
     }
 
-    logger->Flush();
+    log::Flush();
     return 0;
 }
 ```
@@ -188,29 +281,29 @@ extern char** environ;
 
 // 子进程入口（通过命令行参数判断）
 void RunAsChild(int childId) {
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init();
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("child" + std::to_string(childId));
-    logger->SetFormat(format);
+    oneplog::SetFormat(format);
 
-    logger->Info("[Child {}] Started, PID={}", childId, getpid());
-    logger->Flush();
+    log::Info("[Child {}] Started, PID={}", childId, getpid());
+    log::Flush();
 }
 
 // 父进程入口
 void RunAsParent(const char* programPath) {
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init();
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("parent");
-    logger->SetFormat(format);
+    oneplog::SetFormat(format);
 
-    logger->Info("[Parent] Starting, PID={}", getpid());
+    log::Info("[Parent] Starting, PID={}", getpid());
 
     // 使用 posix_spawn 启动子进程
     pid_t pid;
@@ -222,13 +315,13 @@ void RunAsParent(const char* programPath) {
     };
 
     if (posix_spawn(&pid, programPath, nullptr, nullptr, argv, environ) == 0) {
-        logger->Info("[Parent] Spawned child with PID={}", pid);
+        log::Info("[Parent] Spawned child with PID={}", pid);
         
         int status;
         waitpid(pid, &status, 0);
     }
 
-    logger->Flush();
+    log::Flush();
 }
 
 int main(int argc, char* argv[]) {

@@ -26,32 +26,32 @@
 
 #ifdef ONEPLOG_HAS_FORK
 void RunChildProcess(int childId) {
-    // Create a new logger for this child process
-    // 为子进程创建新的日志器
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->SetLevel(oneplog::Level::Debug);
-    logger->Init();
+    // Initialize with sync mode for child process
+    // 子进程使用同步模式初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    config.level = oneplog::Level::Debug;
+    config.processName = "child" + std::to_string(childId);  // Set process name / 设置进程名
+    oneplog::Init(config);
 
-    // Set process name for identification
-    // 设置进程名称以便识别
-    std::string procName = "child" + std::to_string(childId);
-    auto format = std::make_shared<oneplog::ConsoleFormat>();
-    format->SetProcessName(procName);
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    // Set module name for this process / 设置此进程的模块名
+    oneplog::NameManager::SetModuleName("worker");
 
     std::cout << "[Child " << childId << "] PID=" << getpid() << " Starting" << std::endl;
+    
+    log::Info("[Child {}] Process={}, Module={}", 
+              childId,
+              oneplog::NameManager::GetProcessName(),
+              oneplog::NameManager::GetModuleName());
 
     for (int i = 0; i < 5; ++i) {
-        logger->Info("[Child {}] Message {}", childId, i);
+        log::Info("[Child {}] Message {}", childId, i);
         std::this_thread::sleep_for(std::chrono::milliseconds(20 + childId * 10));
     }
 
     std::cout << "[Child " << childId << "] Complete" << std::endl;
-    logger->Flush();
+    log::Flush();
+    oneplog::Shutdown();
 }
 #endif
 
@@ -61,23 +61,20 @@ int main() {
     std::cout << std::endl;
 
 #ifdef ONEPLOG_HAS_FORK
-    // Create parent logger
-    // 创建父进程日志器
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->SetLevel(oneplog::Level::Debug);
-    logger->Init();
+    // Initialize parent with sync mode and process name
+    // 父进程使用同步模式和进程名初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    config.level = oneplog::Level::Debug;
+    config.processName = "parent";  // Set process name / 设置进程名
+    oneplog::Init(config);
 
-    // Set process name
-    // 设置进程名称
-    auto format = std::make_shared<oneplog::ConsoleFormat>();
-    format->SetProcessName("parent");
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    // Set module name for parent process / 设置父进程的模块名
+    oneplog::NameManager::SetModuleName("main");
 
     std::cout << "[Parent] PID=" << getpid() << std::endl;
+    std::cout << "[Parent] Process=" << oneplog::NameManager::GetProcessName() 
+              << ", Module=" << oneplog::NameManager::GetModuleName() << std::endl;
     std::cout << "--- Forking child processes / 创建子进程 ---" << std::endl;
 
     const int numChildren = 3;
@@ -90,8 +87,9 @@ int main() {
             std::cerr << "Fork failed!" << std::endl;
             return 1;
         } else if (pid == 0) {
-            // Child process - create new logger and run
-            // 子进程 - 创建新日志器并运行
+            // Child process - reinitialize logger and run
+            // 子进程 - 重新初始化日志器并运行
+            oneplog::Shutdown();  // Clean up parent's logger
             RunChildProcess(i);
             _exit(0);  // Use _exit to avoid flushing parent's buffers
         } else {
@@ -105,7 +103,7 @@ int main() {
     // 父进程日志记录（与子进程交错）
     std::cout << "[Parent] Starting parent process logging" << std::endl;
     for (int i = 0; i < 5; ++i) {
-        logger->Info("[Parent] Message {}", i);
+        log::Info("[Parent] Message {}", i);
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     std::cout << "[Parent] Parent process logging complete" << std::endl;
@@ -121,7 +119,8 @@ int main() {
         }
     }
 
-    logger->Flush();
+    log::Flush();
+    oneplog::Shutdown();
 
 #else
     std::cout << "Multi-process mode is only supported on Unix-like systems." << std::endl;
@@ -132,19 +131,17 @@ int main() {
     // 在非 Unix 系统上演示单进程用法
     std::cout << "--- Single Process Demo / 单进程演示 ---" << std::endl;
 
-    auto logger = std::make_shared<oneplog::Logger>("demo_logger", oneplog::Mode::Async);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->SetLevel(oneplog::Level::Debug);
-    logger->Init();
-    oneplog::SetDefaultLogger(logger);
-
+    oneplog::LoggerConfig config;
+    config.processName = "demo_app";
+    oneplog::Init(config);
+    
+    oneplog::NameManager::SetModuleName("main");
+    
     for (int i = 0; i < 5; ++i) {
-        logger->Info("Demo message {}", i);
+        log::Info("Demo message {}", i);
     }
 
-    logger->Flush();
-    logger->Shutdown();
+    oneplog::Shutdown();
 #endif
 
     std::cout << std::endl;

@@ -38,38 +38,34 @@ extern char** environ;
  * @brief 作为子进程运行
  */
 void RunAsChild(int childId) {
-    // Create a new logger for this child process
-    // 为子进程创建新的日志器
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->SetLevel(oneplog::Level::Debug);
-    logger->Init();
+    // Initialize with sync mode
+    // 使用同步模式初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    config.level = oneplog::Level::Debug;
+    oneplog::Init(config);
 
     // Set process name for identification
     // 设置进程名称以便识别
     std::string procName = "child" + std::to_string(childId);
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName(procName);
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
 #ifdef ONEPLOG_HAS_POSIX
-    logger->Info("[Child {}] Started, PID={}", childId, getpid());
+    log::Info("[Child {}] Started, PID={}", childId, getpid());
 #else
-    logger->Info("[Child {}] Started", childId);
+    log::Info("[Child {}] Started", childId);
 #endif
 
-    // Simulate some work
-    // 模拟一些工作
+    // Simulate some work / 模拟一些工作
     for (int i = 0; i < 5; ++i) {
-        logger->Info("[Child {}] Working... step {}", childId, i);
+        log::Info("[Child {}] Working... step {}", childId, i);
         std::this_thread::sleep_for(std::chrono::milliseconds(50 + childId * 20));
     }
 
-    logger->Info("[Child {}] Completed", childId);
-    logger->Flush();
+    log::Info("[Child {}] Completed", childId);
+    log::Flush();
 }
 
 /**
@@ -77,31 +73,30 @@ void RunAsChild(int childId) {
  * @brief 作为父进程运行
  */
 void RunAsParent(const char* programPath) {
-    // Create parent logger
-    // 创建父进程日志器
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->SetLevel(oneplog::Level::Debug);
-    logger->Init();
+    // Initialize with sync mode
+    // 使用同步模式初始化
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    config.level = oneplog::Level::Debug;
+    oneplog::Init(config);
 
+    // Set process name
+    // 设置进程名称
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("parent");
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
 #ifdef ONEPLOG_HAS_POSIX
-    logger->Info("[Parent] Starting, PID={}", getpid());
+    log::Info("[Parent] Starting, PID={}", getpid());
 #else
-    logger->Info("[Parent] Starting");
+    log::Info("[Parent] Starting");
 #endif
 
 #ifdef ONEPLOG_HAS_POSIX
     const int numChildren = 3;
     std::vector<pid_t> childPids;
 
-    logger->Info("[Parent] Spawning {} child processes...", numChildren);
+    log::Info("[Parent] Spawning {} child processes...", numChildren);
 
     for (int i = 0; i < numChildren; ++i) {
         pid_t pid;
@@ -121,45 +116,45 @@ void RunAsParent(const char* programPath) {
         int status = posix_spawn(&pid, programPath, nullptr, nullptr, argv, environ);
         
         if (status == 0) {
-            logger->Info("[Parent] Spawned child {} with PID={}", i, pid);
+            log::Info("[Parent] Spawned child {} with PID={}", i, pid);
             childPids.push_back(pid);
         } else {
-            logger->Error("[Parent] Failed to spawn child {}: {}", i, strerror(status));
+            log::Error("[Parent] Failed to spawn child {}: {}", i, strerror(status));
         }
     }
 
     // Parent does some work while children are running
     // 父进程在子进程运行时做一些工作
-    logger->Info("[Parent] Doing parent work...");
+    log::Info("[Parent] Doing parent work...");
     for (int i = 0; i < 3; ++i) {
-        logger->Info("[Parent] Parent working... step {}", i);
+        log::Info("[Parent] Parent working... step {}", i);
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     // Wait for all children to complete
     // 等待所有子进程完成
-    logger->Info("[Parent] Waiting for children to complete...");
+    log::Info("[Parent] Waiting for children to complete...");
     for (pid_t pid : childPids) {
         int status;
         waitpid(pid, &status, 0);
         if (WIFEXITED(status)) {
-            logger->Info("[Parent] Child PID={} exited with status {}", 
-                        pid, WEXITSTATUS(status));
+            log::Info("[Parent] Child PID={} exited with status {}", 
+                      pid, WEXITSTATUS(status));
         }
     }
 
 #else
-    logger->Info("[Parent] posix_spawn not available on this platform");
-    logger->Info("[Parent] Running single process demo instead");
+    log::Info("[Parent] posix_spawn not available on this platform");
+    log::Info("[Parent] Running single process demo instead");
     
     for (int i = 0; i < 5; ++i) {
-        logger->Info("[Parent] Demo message {}", i);
+        log::Info("[Parent] Demo message {}", i);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 #endif
 
-    logger->Info("[Parent] All done!");
-    logger->Flush();
+    log::Info("[Parent] All done!");
+    log::Flush();
 }
 
 int main(int argc, char* argv[]) {
@@ -168,13 +163,11 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     if (argc >= 3 && strcmp(argv[1], "child") == 0) {
-        // Running as child process
-        // 作为子进程运行
+        // Running as child process / 作为子进程运行
         int childId = atoi(argv[2]);
         RunAsChild(childId);
     } else {
-        // Running as parent process
-        // 作为父进程运行
+        // Running as parent process / 作为父进程运行
         RunAsParent(argv[0]);
     }
 

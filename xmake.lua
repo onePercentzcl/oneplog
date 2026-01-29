@@ -184,6 +184,14 @@ if has_config("examples") then
         add_deps("oneplog")
     target_end()
     
+    -- Multi-process multi-thread example / 多进程多线程示例
+    target("multithread_example")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/multithread_example.cpp")
+        add_deps("oneplog")
+    target_end()
+    
     -- Performance benchmark / 性能基准测试
     target("benchmark")
         set_kind("binary")

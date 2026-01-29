@@ -3,6 +3,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [简化接口](#简化接口)
 - [Logger 类](#logger-类)
 - [Sink 类](#sink-类)
 - [Format 类](#format-类)
@@ -19,22 +20,72 @@
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // 创建同步日志器
-    auto logger = std::make_shared<oneplog::Logger>("app", oneplog::Mode::Sync);
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init();
+    // 一行初始化（异步模式 + 控制台输出）
+    oneplog::Init();
     
-    // 设置为默认日志器
-    oneplog::SetDefaultLogger(logger);
+    // 使用 log:: 静态类记录日志
+    log::Info("Hello, {}!", "onePlog");
+    log::Error("Error code: {}", 42);
     
-    // 记录日志
-    logger->Info("Hello, {}!", "onePlog");
+    // 或使用全局函数
+    oneplog::Info("Global function style");
     
-    // 使用宏
-    ONEPLOG_INFO("Value: {}", 42);
-    
+    // 关闭
+    oneplog::Shutdown();
     return 0;
 }
+```
+
+---
+
+## 简化接口
+
+### 一键初始化
+
+```cpp
+// 默认初始化：异步模式 + ConsoleSink + ConsoleFormat
+oneplog::Init();
+
+// 自定义配置初始化
+oneplog::LoggerConfig config;
+config.mode = oneplog::Mode::Sync;  // 同步模式
+config.level = oneplog::Level::Debug;
+oneplog::Init(config);
+```
+
+### log:: 静态类
+
+提供类似 `log::Info()` 的简洁调用方式：
+
+```cpp
+// 基本日志
+log::Trace("Trace message");
+log::Debug("Debug message");
+log::Info("Info message");
+log::Warn("Warning message");
+log::Error("Error message");
+log::Critical("Critical message");
+
+// WFC（等待完成）日志
+log::InfoWFC("Guaranteed to be written");
+log::CriticalWFC("Critical error: {}", code);
+
+// 工具方法
+log::SetLevel(oneplog::Level::Warn);
+log::Flush();
+log::Shutdown();
+```
+
+### 动态修改 Sink 和 Format
+
+```cpp
+oneplog::Init();
+
+// 修改输出目标
+oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log"));
+
+// 修改格式化器
+oneplog::SetFormat(std::make_shared<oneplog::FileFormat>());
 ```
 
 ---
@@ -119,26 +170,6 @@ Level GetLevel() const;
 ```cpp
 void Flush();      // 刷新缓冲区
 void Shutdown();   // 关闭日志器
-```
-
-### 使用示例
-
-```cpp
-// 同步模式
-auto syncLogger = std::make_shared<oneplog::Logger>("sync", oneplog::Mode::Sync);
-syncLogger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-syncLogger->Init();
-syncLogger->Info("Sync message");
-
-// 异步模式
-auto asyncLogger = std::make_shared<oneplog::Logger>("async", oneplog::Mode::Async);
-asyncLogger->SetSink(std::make_shared<oneplog::FileSink>("app.log"));
-oneplog::LoggerConfig cfg;
-cfg.heapRingBufferSize = 1024 * 1024;  // 1MB 缓冲区
-asyncLogger->Init(cfg);
-asyncLogger->Info("Async message");
-asyncLogger->Flush();
-asyncLogger->Shutdown();
 ```
 
 ---
@@ -282,7 +313,7 @@ namespace oneplog {
 ### 级别过滤
 
 ```cpp
-logger->SetLevel(oneplog::Level::Warn);  // 只记录 Warn 及以上级别
+log::SetLevel(oneplog::Level::Warn);  // 只记录 Warn 及以上级别
 ```
 
 ### 级别转换
@@ -344,11 +375,16 @@ ONEPLOG_CRITICAL_WFC("Fatal error, code: {}", 0xDEAD);
 
 ## 全局函数
 
-### 默认日志器
+### 初始化和配置
 
 ```cpp
-void SetDefaultLogger(std::shared_ptr<Logger> logger);
-std::shared_ptr<Logger> GetDefaultLogger();
+void Init();                                    // 默认初始化
+void Init(const LoggerConfig& config);          // 自定义配置初始化
+void SetSink(std::shared_ptr<Sink> sink);       // 设置 Sink
+void SetFormat(std::shared_ptr<Format> format); // 设置格式化器
+void SetLevel(Level level);                     // 设置日志级别
+void Flush();                                   // 刷新缓冲区
+void Shutdown();                                // 关闭日志器
 ```
 
 ### 便捷日志函数
@@ -375,11 +411,28 @@ namespace oneplog {
 }
 ```
 
-使用示例：
+### WFC 日志函数
 
 ```cpp
-oneplog::SetDefaultLogger(logger);
-oneplog::Info("Using global function");
+namespace oneplog {
+    template<typename... Args>
+    void TraceWFC(const char* fmt, Args&&... args);
+    
+    template<typename... Args>
+    void DebugWFC(const char* fmt, Args&&... args);
+    
+    template<typename... Args>
+    void InfoWFC(const char* fmt, Args&&... args);
+    
+    template<typename... Args>
+    void WarnWFC(const char* fmt, Args&&... args);
+    
+    template<typename... Args>
+    void ErrorWFC(const char* fmt, Args&&... args);
+    
+    template<typename... Args>
+    void CriticalWFC(const char* fmt, Args&&... args);
+}
 ```
 
 ---
@@ -390,9 +443,11 @@ oneplog::Info("Using global function");
 
 ```cpp
 struct LoggerConfig {
-    Mode mode = Mode::Sync;              // 运行模式
-    size_t heapRingBufferSize = 65536;   // 异步模式缓冲区大小
+    Mode mode = Mode::Async;             // 运行模式
+    Level level = Level::Info;           // 日志级别
+    size_t heapRingBufferSize = 8192;    // 异步模式缓冲区大小
     QueueFullPolicy queueFullPolicy = QueueFullPolicy::DropNewest;  // 队列满策略
+    std::string processName;             // 进程名（可选）
 };
 ```
 
@@ -406,18 +461,173 @@ enum class QueueFullPolicy {
 };
 ```
 
-### 配置示例
+---
+
+## NameManager 类
+
+NameManager 提供进程名和模块名的管理功能，支持在三种运行模式下使用不同的存储策略。
+
+### 初始化
 
 ```cpp
-oneplog::LoggerConfig config;
-config.mode = oneplog::Mode::Async;
-config.heapRingBufferSize = 1024 * 1024;  // 1MB
-config.queueFullPolicy = oneplog::QueueFullPolicy::Block;
+// 通常由 oneplog::Init() 自动调用
+static void Initialize(Mode mode, SharedMemory* sharedMemory = nullptr);
 
-auto logger = std::make_shared<oneplog::Logger>("app");
-logger->SetSink(std::make_shared<oneplog::FileSink>("app.log"));
-logger->Init(config);
+// 关闭（通常由 oneplog::Shutdown() 自动调用）
+static void Shutdown();
+
+// 检查是否已初始化
+static bool IsInitialized();
 ```
+
+### 进程名管理
+
+```cpp
+// 设置进程名（最多 31 字符，超长会被截断）
+static void SetProcessName(const std::string& name);
+
+// 获取进程名
+// processId: 进程 ID（MProc 模式使用，0 表示当前进程）
+static std::string GetProcessName(uint32_t processId = 0);
+```
+
+### 模块名管理
+
+```cpp
+// 设置当前线程的模块名（最多 31 字符，超长会被截断）
+static void SetModuleName(const std::string& name);
+
+// 获取模块名
+// threadId: 线程 ID（0 表示当前线程）
+static std::string GetModuleName(uint32_t threadId = 0);
+```
+
+### 模式和 ID 查询
+
+```cpp
+// 获取当前运行模式
+static Mode GetMode();
+
+// 获取注册的进程 ID（MProc 模式）
+static uint32_t GetRegisteredProcessId();
+
+// 获取当前线程注册的线程 ID（MProc 模式）
+static uint32_t GetRegisteredThreadId();
+```
+
+### 使用示例
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    // 方式 1：通过配置设置进程名
+    oneplog::LoggerConfig config;
+    config.processName = "my_app";
+    oneplog::Init(config);
+    
+    // 方式 2：初始化后设置
+    oneplog::NameManager::SetProcessName("my_app");
+    
+    // 设置模块名
+    oneplog::NameManager::SetModuleName("main");
+    
+    // 获取名称
+    std::string procName = oneplog::NameManager::GetProcessName();
+    std::string modName = oneplog::NameManager::GetModuleName();
+    
+    log::Info("Process: {}, Module: {}", procName, modName);
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+---
+
+## ThreadWithModuleName 类
+
+ThreadWithModuleName 提供带模块名继承的线程创建功能。
+
+### 创建继承模块名的线程
+
+```cpp
+// 创建线程，自动继承父线程的模块名
+template<typename Func, typename... Args>
+static std::thread Create(Func&& func, Args&&... args);
+```
+
+### 创建指定模块名的线程
+
+```cpp
+// 创建线程，使用指定的模块名
+template<typename Func, typename... Args>
+static std::thread CreateWithName(const std::string& moduleName, Func&& func, Args&&... args);
+```
+
+### 使用示例
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    oneplog::Init();
+    
+    // 设置父线程模块名
+    oneplog::NameManager::SetModuleName("supervisor");
+    
+    // 子线程自动继承 "supervisor" 模块名
+    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+        log::Info("Child module: {}", oneplog::NameManager::GetModuleName());
+        // 输出: Child module: supervisor
+    });
+    childThread.join();
+    
+    // 创建具有特定模块名的线程
+    auto workerThread = oneplog::ThreadWithModuleName::CreateWithName("worker", []() {
+        log::Info("Worker module: {}", oneplog::NameManager::GetModuleName());
+        // 输出: Worker module: worker
+    });
+    workerThread.join();
+    
+    // 支持带参数的函数
+    auto paramThread = oneplog::ThreadWithModuleName::Create([](int a, int b) {
+        log::Info("Sum: {}", a + b);
+    }, 10, 20);
+    paramThread.join();
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### 嵌套继承
+
+```cpp
+oneplog::NameManager::SetModuleName("grandparent");
+
+auto parentThread = oneplog::ThreadWithModuleName::Create([]() {
+    // 继承 "grandparent"
+    log::Info("Parent: {}", oneplog::NameManager::GetModuleName());
+    
+    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+        // 也继承 "grandparent"
+        log::Info("Child: {}", oneplog::NameManager::GetModuleName());
+    });
+    childThread.join();
+});
+parentThread.join();
+```
+
+---
+
+## 三种模式下的名称存储
+
+| 模式 | 进程名存储 | 模块名存储 | 说明 |
+|------|-----------|-----------|------|
+| Sync | thread_local | thread_local | 每个线程独立存储 |
+| Async | 全局变量 | 堆上的 TID-模块名映射表 | 后台线程可通过 TID 查找 |
+| MProc | 共享内存 | 共享内存 | 多进程共享 |
 
 ---
 
@@ -433,47 +643,59 @@ logger->Init(config);
 
 ## 完整示例
 
+### 简单用法
+
 ```cpp
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // 创建异步日志器
-    auto logger = std::make_shared<oneplog::Logger>("myapp", oneplog::Mode::Async);
+    oneplog::Init();
     
-    // 配置文件输出
-    auto sink = std::make_shared<oneplog::FileSink>("app.log", 10*1024*1024, 5);
-    logger->SetSink(sink);
+    log::Info("Application started");
+    log::Debug("Debug info: {}", 123);
+    log::Warn("Warning message");
+    log::CriticalWFC("Critical event");
     
-    // 配置格式
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### 高级用法
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    // 自定义配置
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Async;
+    config.level = oneplog::Level::Debug;
+    config.heapRingBufferSize = 1024 * 1024;  // 1MB
+    oneplog::Init(config);
+    
+    // 修改输出到文件
+    oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log", 10*1024*1024, 5));
+    
+    // 修改格式
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("myapp");
-    logger->SetFormat(format);
-    
-    // 设置日志级别
-    logger->SetLevel(oneplog::Level::Debug);
-    
-    // 初始化
-    oneplog::LoggerConfig config;
-    config.heapRingBufferSize = 1024 * 1024;
-    logger->Init(config);
-    
-    // 设置为默认日志器
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
     
     // 记录日志
-    logger->Info("Application started");
-    logger->Debug("Debug info: {}", 123);
+    log::Info("Application started");
+    log::Debug("Debug info: {}", 123);
     
     // 使用宏
     ONEPLOG_WARN("Warning message");
     ONEPLOG_ERROR_IF(false, "This won't be logged");
     
     // 关键日志确保写入
-    logger->CriticalWFC("Critical event occurred");
+    log::CriticalWFC("Critical event occurred");
     
     // 关闭
-    logger->Flush();
-    logger->Shutdown();
+    log::Flush();
+    oneplog::Shutdown();
     
     return 0;
 }

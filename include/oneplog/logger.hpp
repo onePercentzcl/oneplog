@@ -20,6 +20,7 @@
 #include "oneplog/format.hpp"
 #include "oneplog/heap_ring_buffer.hpp"
 #include "oneplog/log_entry.hpp"
+#include "oneplog/name_manager.hpp"
 #include "oneplog/pipeline_thread.hpp"
 #include "oneplog/shared_memory.hpp"
 #include "oneplog/sink.hpp"
@@ -51,6 +52,7 @@ struct LoggerConfig {
     std::string sharedMemoryName;                ///< Shared memory name (for MProc mode) / 共享内存名称
     std::chrono::microseconds pollInterval{1};   ///< Poll interval / 轮询间隔
     std::chrono::milliseconds pollTimeout{10};   ///< Poll timeout / 轮询超时
+    std::string processName;                     ///< Process name (optional) / 进程名（可选）
 };
 
 // ==============================================================================
@@ -625,8 +627,13 @@ private:
         entry.line = loc.line;
 #endif
 
-        // Capture arguments / 捕获参数
-        entry.snapshot.Capture(std::forward<Args>(args)...);
+        // Capture format string and arguments / 捕获格式字符串和参数
+        if constexpr (sizeof...(Args) == 0) {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+        } else {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+            entry.snapshot.Capture(std::forward<Args>(args)...);
+        }
 
         // Push with WFC and wait / 使用 WFC 推送并等待
         if (m_heapRingBuffer) {
@@ -790,26 +797,97 @@ inline void SetDefaultLogger(std::shared_ptr<Logger> logger) {
 // ==============================================================================
 
 /**
- * @brief Initialize the default logger
- * @brief 初始化默认日志器
+ * @brief Initialize the default logger with custom configuration
+ * @brief 使用自定义配置初始化默认日志器
+ *
+ * @param config Logger configuration / 日志器配置
  */
-inline void Init(const LoggerConfig& config = LoggerConfig{}) {
+inline void Init(const LoggerConfig& config) {
+    // Initialize NameManager first / 首先初始化 NameManager
+    NameManager::Initialize(config.mode, nullptr);
+    
+    // Set process name if provided / 如果提供了进程名则设置
+    if (!config.processName.empty()) {
+        NameManager::SetProcessName(config.processName);
+    }
+    
     auto logger = std::make_shared<Logger>("default", config.mode);
+    logger->SetSink(std::make_shared<ConsoleSink>());
+    logger->SetFormat(std::make_shared<ConsoleFormat>());
     logger->SetLevel(config.level);
     logger->Init(config);
     SetDefaultLogger(logger);
 }
 
 /**
+ * @brief Initialize the default logger with default settings
+ * @brief 使用默认设置初始化默认日志器
+ *
+ * Creates an async logger with ConsoleSink and ConsoleFormat.
+ * 创建一个使用 ConsoleSink 和 ConsoleFormat 的异步日志器。
+ *
+ * Usage / 用法:
+ * @code
+ * oneplog::Init();
+ * oneplog::Info("Hello, {}!", "world");
+ * @endcode
+ */
+inline void Init() {
+    LoggerConfig config;
+    config.mode = Mode::Async;
+    config.level = Level::Info;
+    config.heapRingBufferSize = 65536;
+    Init(config);
+}
+
+/**
+ * @brief Set the sink for the default logger
+ * @brief 设置默认日志器的 Sink
+ *
+ * @param sink The sink to use / 要使用的 Sink
+ */
+inline void SetSink(std::shared_ptr<Sink> sink) {
+    auto logger = DefaultLogger();
+    if (logger) {
+        logger->SetSink(std::move(sink));
+    }
+}
+
+/**
+ * @brief Set the format for the default logger
+ * @brief 设置默认日志器的格式化器
+ *
+ * @param format The format to use / 要使用的格式化器
+ */
+inline void SetFormat(std::shared_ptr<Format> format) {
+    auto logger = DefaultLogger();
+    if (logger) {
+        logger->SetFormat(std::move(format));
+    }
+}
+
+/**
  * @brief Initialize producer for multi-process mode (child process)
  * @brief 初始化多进程模式的生产者（子进程）
+ *
+ * @param shmName Shared memory name / 共享内存名称
+ * @param processName Process name (optional) / 进程名（可选）
  */
-inline void InitProducer(const std::string& shmName) {
+inline void InitProducer(const std::string& shmName, const std::string& processName = "") {
     // Connect to existing shared memory / 连接到已存在的共享内存
     auto sharedMemory = SharedMemory::Connect(shmName);
     if (!sharedMemory) {
         return;
     }
+    
+    // Initialize NameManager with MProc mode / 使用 MProc 模式初始化 NameManager
+    NameManager::Initialize(Mode::MProc, sharedMemory.get());
+    
+    // Set process name if provided / 如果提供了进程名则设置
+    if (!processName.empty()) {
+        NameManager::SetProcessName(processName);
+    }
+    
     // Producer initialization would go here
     // 生产者初始化代码在这里
 }
@@ -933,6 +1011,9 @@ inline void Shutdown() {
         logger->Shutdown();
     }
     SetDefaultLogger(nullptr);
+    
+    // Shutdown NameManager / 关闭 NameManager
+    NameManager::Shutdown();
 }
 
 // ==============================================================================
@@ -990,3 +1071,96 @@ inline const std::string& GetModuleName() {
 }
 
 }  // namespace oneplog
+
+// ==============================================================================
+// Static Logger Class / 静态日志类
+// ==============================================================================
+
+/**
+ * @brief Static logger class for convenient logging
+ * @brief 静态日志类，提供便捷的日志记录方式
+ *
+ * Usage / 用法:
+ * @code
+ * oneplog::Init();
+ * log::Info("Hello, {}!", "world");
+ * log::ErrorWFC("Critical error: {}", code);
+ * @endcode
+ */
+class log {
+public:
+    // Basic logging methods / 基本日志方法
+    template<typename... Args>
+    static void Trace(const char* fmt, Args&&... args) {
+        oneplog::Trace(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void Debug(const char* fmt, Args&&... args) {
+        oneplog::Debug(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void Info(const char* fmt, Args&&... args) {
+        oneplog::Info(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void Warn(const char* fmt, Args&&... args) {
+        oneplog::Warn(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void Error(const char* fmt, Args&&... args) {
+        oneplog::Error(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void Critical(const char* fmt, Args&&... args) {
+        oneplog::Critical(fmt, std::forward<Args>(args)...);
+    }
+
+    // WFC logging methods / WFC 日志方法
+    template<typename... Args>
+    static void TraceWFC(const char* fmt, Args&&... args) {
+        oneplog::TraceWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void DebugWFC(const char* fmt, Args&&... args) {
+        oneplog::DebugWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void InfoWFC(const char* fmt, Args&&... args) {
+        oneplog::InfoWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void WarnWFC(const char* fmt, Args&&... args) {
+        oneplog::WarnWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void ErrorWFC(const char* fmt, Args&&... args) {
+        oneplog::ErrorWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void CriticalWFC(const char* fmt, Args&&... args) {
+        oneplog::CriticalWFC(fmt, std::forward<Args>(args)...);
+    }
+
+    // Utility methods / 工具方法
+    static void SetLevel(oneplog::Level level) {
+        oneplog::SetLevel(level);
+    }
+
+    static void Flush() {
+        oneplog::Flush();
+    }
+
+    static void Shutdown() {
+        oneplog::Shutdown();
+    }
+};

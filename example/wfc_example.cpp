@@ -23,35 +23,18 @@ int main() {
     std::cout << "=== onePlog WFC（等待完成）示例 ===" << std::endl;
     std::cout << std::endl;
 
-    // Create a logger in async mode
-    // 创建异步模式的日志器
-    auto logger = std::make_shared<oneplog::Logger>("wfc_logger", oneplog::Mode::Async);
-
-    // Create a console sink
-    // 创建控制台输出
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-
-    // Set log level
-    // 设置日志级别
-    logger->SetLevel(oneplog::Level::Trace);
-
-    // Initialize the logger
-    // 初始化日志器
-    logger->Init();
-
-    // Set as default logger
-    // 设置为默认日志器
-    oneplog::SetDefaultLogger(logger);
+    // Simple initialization / 简单初始化
+    oneplog::Init();
+    oneplog::SetLevel(oneplog::Level::Trace);
 
     std::cout << "--- Normal Async Logging / 普通异步日志 ---" << std::endl;
 
     // Normal async logging (returns immediately)
     // 普通异步日志（立即返回）
     auto start = std::chrono::high_resolution_clock::now();
-    logger->Info("Normal async message 1");
-    logger->Info("Normal async message 2");
-    logger->Info("Normal async message 3");
+    log::Info("Normal async message 1");
+    log::Info("Normal async message 2");
+    log::Info("Normal async message 3");
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
@@ -65,10 +48,10 @@ int main() {
     std::cout << std::endl;
     std::cout << "--- WFC Logging / WFC 日志 ---" << std::endl;
 
-    // WFC logging (waits for completion)
-    // WFC 日志（等待完成）
+    // WFC logging using log:: class (waits for completion)
+    // 使用 log:: 类的 WFC 日志（等待完成）
     start = std::chrono::high_resolution_clock::now();
-    logger->InfoWFC("WFC message 1 - guaranteed to be written");
+    log::InfoWFC("WFC message - guaranteed to be written");
     end = std::chrono::high_resolution_clock::now();
     duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
@@ -78,20 +61,19 @@ int main() {
     std::cout << std::endl;
     std::cout << "--- WFC at Different Levels / 不同级别的 WFC ---" << std::endl;
 
-    // WFC at different log levels
-    // 不同日志级别的 WFC
-    logger->TraceWFC("WFC trace message");
-    logger->DebugWFC("WFC debug message");
-    logger->InfoWFC("WFC info message");
-    logger->WarnWFC("WFC warning message");
-    logger->ErrorWFC("WFC error message");
-    logger->CriticalWFC("WFC critical message");
+    // WFC at different log levels using log:: class
+    // 使用 log:: 类的不同日志级别的 WFC
+    log::TraceWFC("WFC trace message");
+    log::DebugWFC("WFC debug message");
+    log::InfoWFC("WFC info message");
+    log::WarnWFC("WFC warning message");
+    log::ErrorWFC("WFC error message");
+    log::CriticalWFC("WFC critical message");
 
     std::cout << std::endl;
     std::cout << "--- WFC Macros / WFC 宏 ---" << std::endl;
 
-    // Using WFC macros
-    // 使用 WFC 宏
+    // Using WFC macros / 使用 WFC 宏
     ONEPLOG_TRACE_WFC("Macro WFC trace");
     ONEPLOG_DEBUG_WFC("Macro WFC debug");
     ONEPLOG_INFO_WFC("Macro WFC info with value: {}", 42);
@@ -109,9 +91,9 @@ int main() {
 
     // Use WFC for critical errors to ensure they are logged before potential crash
     // 对关键错误使用 WFC 以确保在潜在崩溃前记录
-    logger->CriticalWFC("CRITICAL: System error detected! Error code: {}", 0xDEAD);
-    logger->ErrorWFC("ERROR: Attempting recovery...");
-    logger->InfoWFC("INFO: Recovery successful");
+    log::CriticalWFC("CRITICAL: System error detected! Error code: {}", 0xDEAD);
+    log::ErrorWFC("ERROR: Attempting recovery...");
+    log::InfoWFC("INFO: Recovery successful");
 
     std::cout << "Critical error handled, all logs guaranteed written" << std::endl;
     std::cout << "关键错误已处理，所有日志保证已写入" << std::endl;
@@ -121,24 +103,21 @@ int main() {
 
     constexpr int kIterations = 100;
 
-    // Measure normal async logging
-    // 测量普通异步日志
+    // Measure normal async logging / 测量普通异步日志
     start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < kIterations; ++i) {
-        logger->Debug("Async benchmark message {}", i);
+        log::Debug("Async benchmark message {}", i);
     }
     end = std::chrono::high_resolution_clock::now();
     auto asyncDuration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    // Wait for async processing
-    // 等待异步处理
+    // Wait for async processing / 等待异步处理
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // Measure WFC logging
-    // 测量 WFC 日志
+    // Measure WFC logging / 测量 WFC 日志
     start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < kIterations; ++i) {
-        logger->DebugWFC("WFC benchmark message {}", i);
+        log::DebugWFC("{}", i);
     }
     end = std::chrono::high_resolution_clock::now();
     auto wfcDuration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -148,9 +127,8 @@ int main() {
     std::cout << "WFC: " << kIterations << " messages in " << wfcDuration.count() << " us" << std::endl;
     std::cout << "WFC: " << kIterations << " 条消息耗时 " << wfcDuration.count() << " 微秒" << std::endl;
 
-    // Shutdown
-    // 关闭
-    logger->Shutdown();
+    // Shutdown / 关闭
+    oneplog::Shutdown();
 
     std::cout << std::endl;
     std::cout << "=== Example Complete / 示例完成 ===" << std::endl;

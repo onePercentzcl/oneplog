@@ -26,6 +26,7 @@
 
 #include "oneplog/common.hpp"
 #include "oneplog/log_entry.hpp"
+#include "oneplog/name_manager.hpp"
 
 namespace oneplog {
 
@@ -174,6 +175,37 @@ public:
     const std::string& GetProcessName() const { return m_processName; }
     const std::string& GetModuleName() const { return m_moduleName; }
 
+    /**
+     * @brief Resolve process name from NameManager by ID
+     * @brief 通过 ID 从 NameManager 解析进程名
+     *
+     * @param processId Process ID (0 for current) / 进程 ID（0 表示当前）
+     * @return Resolved process name (padded to 6 chars) / 解析后的进程名（填充到 6 字符）
+     */
+    static std::string ResolveProcessName(uint32_t processId = 0) {
+        std::string name = NameManager::GetProcessName(processId);
+        return PadOrTruncate(name, 6);
+    }
+
+    /**
+     * @brief Resolve module name from NameManager by thread ID
+     * @brief 通过线程 ID 从 NameManager 解析模块名
+     *
+     * @param threadId Thread ID (0 for current) / 线程 ID（0 表示当前）
+     * @return Resolved module name (padded to 6 chars) / 解析后的模块名（填充到 6 字符）
+     */
+    static std::string ResolveModuleName(uint32_t threadId = 0) {
+        std::string name = NameManager::GetModuleName(threadId);
+        return PadOrTruncate(name, 6);
+    }
+
+    /**
+     * @brief Enable/disable dynamic name resolution from NameManager
+     * @brief 启用/禁用从 NameManager 动态解析名称
+     */
+    void SetDynamicNameResolution(bool enabled) { m_useDynamicNames = enabled; }
+    bool IsDynamicNameResolutionEnabled() const { return m_useDynamicNames; }
+
 protected:
     /**
      * @brief Pad or truncate string to fixed width (centered)
@@ -306,6 +338,7 @@ protected:
     std::vector<std::shared_ptr<Sink>> m_sinks;
     std::string m_processName = " main ";  // Default 6 chars centered
     std::string m_moduleName = " main ";   // Default 6 chars centered
+    bool m_useDynamicNames = true;         // Use NameManager by default / 默认使用 NameManager
 };
 
 
@@ -394,6 +427,28 @@ public:
 
 private:
     /**
+     * @brief Get process name (dynamic or static)
+     * @brief 获取进程名（动态或静态）
+     */
+    std::string GetEffectiveProcessName(uint32_t processId) const {
+        if (m_useDynamicNames) {
+            return ResolveProcessName(processId);
+        }
+        return m_processName;
+    }
+
+    /**
+     * @brief Get module name (dynamic or static)
+     * @brief 获取模块名（动态或静态）
+     */
+    std::string GetEffectiveModuleName(uint32_t threadId) const {
+        if (m_useDynamicNames) {
+            return ResolveModuleName(threadId);
+        }
+        return m_moduleName;
+    }
+
+    /**
      * @brief Debug mode format with colors
      * @brief Debug 模式格式（带颜色）
      * [15:20:23:123] [INFO] [进程名:PID] [模块名:TID] 消息
@@ -401,6 +456,9 @@ private:
     std::string FormatDebug(const LogEntry& entry) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(entry.level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(entry.processId);
+        std::string moduleName = GetEffectiveModuleName(entry.threadId);
 
 #ifdef ONEPLOG_USE_FMT
         return fmt::format("[{}] {}[{}]{} [{}:{}] [{}:{}] {}",
@@ -408,8 +466,8 @@ private:
             levelColor,
             LevelToString(entry.level, LevelNameStyle::Short4),
             reset,
-            m_processName, entry.processId,
-            m_moduleName, entry.threadId,
+            processName, entry.processId,
+            moduleName, entry.threadId,
             entry.snapshot.FormatAll());
 #else
         std::string result;
@@ -423,11 +481,11 @@ private:
         result += "]";
         result += reset;
         result += " [";
-        result += m_processName;
+        result += processName;
         result += ":";
         result += std::to_string(entry.processId);
         result += "] [";
-        result += m_moduleName;
+        result += moduleName;
         result += ":";
         result += std::to_string(entry.threadId);
         result += "] ";
@@ -445,6 +503,9 @@ private:
                                   const std::string& message) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(processId);
+        std::string moduleName = GetEffectiveModuleName(threadId);
 
 #ifdef ONEPLOG_USE_FMT
         return fmt::format("[{}] {}[{}]{} [{}:{}] [{}:{}] {}",
@@ -452,8 +513,8 @@ private:
             levelColor,
             LevelToString(level, LevelNameStyle::Short4),
             reset,
-            m_processName, processId,
-            m_moduleName, threadId,
+            processName, processId,
+            moduleName, threadId,
             message);
 #else
         std::string result;
@@ -467,11 +528,11 @@ private:
         result += "]";
         result += reset;
         result += " [";
-        result += m_processName;
+        result += processName;
         result += ":";
         result += std::to_string(processId);
         result += "] [";
-        result += m_moduleName;
+        result += moduleName;
         result += ":";
         result += std::to_string(threadId);
         result += "] ";
@@ -491,6 +552,9 @@ private:
                              std::string_view message) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(processId);
+        std::string moduleName = GetEffectiveModuleName(threadId);
 
         // Format timestamp to stack buffer
         char timeBuf[16];
@@ -502,8 +566,8 @@ private:
             levelColor,
             LevelToString(level, LevelNameStyle::Short4),
             reset,
-            m_processName, processId,
-            m_moduleName, threadId,
+            processName, processId,
+            moduleName, threadId,
             message);
     }
 #endif
@@ -516,6 +580,9 @@ private:
     std::string FormatRelease(const LogEntry& entry) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(entry.level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(entry.processId);
+        std::string moduleName = GetEffectiveModuleName(entry.threadId);
 
 #ifdef ONEPLOG_USE_FMT
         return fmt::format("[{}] {}[{}]{} [{}] [{}] {}",
@@ -523,8 +590,8 @@ private:
             levelColor,
             LevelToString(entry.level, LevelNameStyle::Short4),
             reset,
-            m_processName,
-            m_moduleName,
+            processName,
+            moduleName,
             entry.snapshot.FormatAll());
 #else
         std::string result;
@@ -538,9 +605,9 @@ private:
         result += "]";
         result += reset;
         result += " [";
-        result += m_processName;
+        result += processName;
         result += "] [";
-        result += m_moduleName;
+        result += moduleName;
         result += "] ";
         result += entry.snapshot.FormatAll();
         return result;
@@ -555,6 +622,9 @@ private:
                                     const std::string& message) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(0);
+        std::string moduleName = GetEffectiveModuleName(0);
 
 #ifdef ONEPLOG_USE_FMT
         return fmt::format("[{}] {}[{}]{} [{}] [{}] {}",
@@ -562,8 +632,8 @@ private:
             levelColor,
             LevelToString(level, LevelNameStyle::Short4),
             reset,
-            m_processName,
-            m_moduleName,
+            processName,
+            moduleName,
             message);
 #else
         std::string result;
@@ -577,9 +647,9 @@ private:
         result += "]";
         result += reset;
         result += " [";
-        result += m_processName;
+        result += processName;
         result += "] [";
-        result += m_moduleName;
+        result += moduleName;
         result += "] ";
         result += message;
         return result;
@@ -596,6 +666,9 @@ private:
                                std::string_view message) {
         const char* levelColor = m_colorEnabled ? GetLevelColor(level) : "";
         const char* reset = m_colorEnabled ? color::kReset : "";
+        
+        std::string processName = GetEffectiveProcessName(0);
+        std::string moduleName = GetEffectiveModuleName(0);
 
         // Format timestamp to stack buffer
         char timeBuf[12];
@@ -607,8 +680,8 @@ private:
             levelColor,
             LevelToString(level, LevelNameStyle::Short4),
             reset,
-            m_processName,
-            m_moduleName,
+            processName,
+            moduleName,
             message);
     }
 #endif
@@ -631,6 +704,9 @@ public:
     FileFormat() = default;
 
     std::string FormatEntry(const LogEntry& entry) override {
+        std::string processName = m_useDynamicNames ? ResolveProcessName(entry.processId) : m_processName;
+        std::string moduleName = m_useDynamicNames ? ResolveModuleName(entry.threadId) : m_moduleName;
+        
 #ifdef ONEPLOG_USE_FMT
 #ifndef NDEBUG
         const char* filename = entry.file ? ExtractFilename(entry.file) : "";
@@ -638,8 +714,8 @@ public:
         return fmt::format("[{}] [{}] [{}:{}] [{}:{}] [{}:{}] [{}] {}",
             FormatTimestampFull(entry.timestamp),
             LevelToString(entry.level, LevelNameStyle::Short4),
-            m_processName, entry.processId,
-            m_moduleName, entry.threadId,
+            processName, entry.processId,
+            moduleName, entry.threadId,
             filename, entry.line,
             function,
             entry.snapshot.FormatAll());
@@ -647,8 +723,8 @@ public:
         return fmt::format("[{}] [{}] [{}:{}] [{}:{}] {}",
             FormatTimestampFull(entry.timestamp),
             LevelToString(entry.level, LevelNameStyle::Short4),
-            m_processName, entry.processId,
-            m_moduleName, entry.threadId,
+            processName, entry.processId,
+            moduleName, entry.threadId,
             entry.snapshot.FormatAll());
 #endif
 #else
@@ -659,11 +735,11 @@ public:
         result += "] [";
         result += LevelToString(entry.level, LevelNameStyle::Short4);
         result += "] [";
-        result += m_processName;
+        result += processName;
         result += ":";
         result += std::to_string(entry.processId);
         result += "] [";
-        result += m_moduleName;
+        result += moduleName;
         result += ":";
         result += std::to_string(entry.threadId);
         result += "]";
@@ -713,6 +789,9 @@ public:
     JsonFormat() = default;
 
     std::string FormatEntry(const LogEntry& entry) override {
+        std::string processName = m_useDynamicNames ? ResolveProcessName(entry.processId) : m_processName;
+        std::string moduleName = m_useDynamicNames ? ResolveModuleName(entry.threadId) : m_moduleName;
+        
 #ifdef ONEPLOG_USE_FMT
         std::string message = entry.snapshot.FormatAll();
         EscapeJsonInPlace(message);
@@ -737,8 +816,8 @@ public:
                 "}}",
                 FormatTimestampFull(entry.timestamp),
                 LevelToString(entry.level, LevelNameStyle::Full),
-                m_processName, entry.processId,
-                m_moduleName, entry.threadId,
+                processName, entry.processId,
+                moduleName, entry.threadId,
                 filename, entry.line, function,
                 message);
         } else {
@@ -748,8 +827,8 @@ public:
                 "\"file\":\"{}\",\"line\":{},\"function\":\"{}\",\"message\":\"{}\"}}",
                 FormatTimestampFull(entry.timestamp),
                 LevelToString(entry.level, LevelNameStyle::Full),
-                m_processName, entry.processId,
-                m_moduleName, entry.threadId,
+                processName, entry.processId,
+                moduleName, entry.threadId,
                 filename, entry.line, function,
                 message);
         }
@@ -767,8 +846,8 @@ public:
                 "}}",
                 FormatTimestampFull(entry.timestamp),
                 LevelToString(entry.level, LevelNameStyle::Full),
-                m_processName, entry.processId,
-                m_moduleName, entry.threadId,
+                processName, entry.processId,
+                moduleName, entry.threadId,
                 message);
         } else {
             return fmt::format(
@@ -776,13 +855,13 @@ public:
                 "\"processId\":{},\"moduleName\":\"{}\",\"threadId\":{},\"message\":\"{}\"}}",
                 FormatTimestampFull(entry.timestamp),
                 LevelToString(entry.level, LevelNameStyle::Full),
-                m_processName, entry.processId,
-                m_moduleName, entry.threadId,
+                processName, entry.processId,
+                moduleName, entry.threadId,
                 message);
         }
 #endif
 #else
-        return FormatJsonManual(entry);
+        return FormatJsonManual(entry, processName, moduleName);
 #endif
     }
 
@@ -817,7 +896,9 @@ private:
         str = std::move(result);
     }
 
-    std::string FormatJsonManual(const LogEntry& entry) {
+    std::string FormatJsonManual(const LogEntry& entry, 
+                                  const std::string& processName,
+                                  const std::string& moduleName) {
         std::string message = entry.snapshot.FormatAll();
         EscapeJsonInPlace(message);
 
@@ -828,9 +909,9 @@ private:
         oss << "{" << nl;
         oss << sp << "\"timestamp\":\"" << FormatTimestampFull(entry.timestamp) << "\"," << nl;
         oss << sp << "\"level\":\"" << LevelToString(entry.level, LevelNameStyle::Full) << "\"," << nl;
-        oss << sp << "\"processName\":\"" << m_processName << "\"," << nl;
+        oss << sp << "\"processName\":\"" << processName << "\"," << nl;
         oss << sp << "\"processId\":" << entry.processId << "," << nl;
-        oss << sp << "\"moduleName\":\"" << m_moduleName << "\"," << nl;
+        oss << sp << "\"moduleName\":\"" << moduleName << "\"," << nl;
         oss << sp << "\"threadId\":" << entry.threadId << "," << nl;
 #ifndef NDEBUG
         if (entry.file) {

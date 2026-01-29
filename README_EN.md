@@ -34,22 +34,21 @@ make
 #include <oneplog/oneplog.hpp>
 
 int main() {
-    // Create logger
-    auto logger = std::make_shared<oneplog::Logger>("my_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
-    oneplog::SetDefaultLogger(logger);
+    // One-line initialization (async mode + console output)
+    oneplog::Init();
     
-    // Log messages
-    logger->Info("Hello, {}!", "onePlog");
-    logger->Error("Error code: {}", 42);
+    // Use log:: static class for logging
+    log::Info("Hello, {}!", "onePlog");
+    log::Error("Error code: {}", 42);
+    
+    // Or use global functions
+    oneplog::Info("Global function style");
     
     // Using macros
     ONEPLOG_INFO("Macro logging: {}", "test");
     
     // Shutdown
-    logger->Flush();
+    oneplog::Shutdown();
     return 0;
 }
 ```
@@ -62,15 +61,17 @@ int main() {
 int main() {
     // Initialize with custom config
     oneplog::LoggerConfig config;
-    config.mode = oneplog::Mode::Async;
-    config.heapRingBufferSize = 8192;
+    config.mode = oneplog::Mode::Sync;  // Sync mode
+    config.level = oneplog::Level::Debug;
+    oneplog::Init(config);
     
-    auto logger = std::make_shared<oneplog::Logger>("my_logger");
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init(config);
+    // Dynamically modify Sink and Format
+    oneplog::SetSink(std::make_shared<oneplog::FileSink>("app.log"));
+    oneplog::SetFormat(std::make_shared<oneplog::FileFormat>());
     
-    logger->Info("Custom logger message");
+    log::Info("Custom logger message");
     
+    oneplog::Shutdown();
     return 0;
 }
 ```
@@ -85,6 +86,102 @@ int main() {
 | Warn | warn | WARN | W | Yellow |
 | Error | error | ERRO | E | Red |
 | Critical | critical | CRIT | C | Magenta |
+
+## Process/Module Name Management
+
+onePlog supports setting process and module names for logs, making it easy to identify log sources in multi-process and multi-threaded environments.
+
+### Setting Process Name
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    // Method 1: Set process name via config
+    oneplog::LoggerConfig config;
+    config.processName = "my_app";
+    oneplog::Init(config);
+    
+    // Method 2: Set after initialization
+    oneplog::NameManager::SetProcessName("my_app");
+    
+    // Get process name
+    std::string name = oneplog::NameManager::GetProcessName();
+    
+    log::Info("Process name: {}", name);
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### Setting Module Name
+
+Each thread can set its own module name:
+
+```cpp
+#include <oneplog/oneplog.hpp>
+#include <thread>
+
+int main() {
+    oneplog::LoggerConfig config;
+    config.processName = "my_app";
+    oneplog::Init(config);
+    
+    // Main thread sets module name
+    oneplog::NameManager::SetModuleName("main");
+    log::Info("Main thread message");
+    
+    // Worker thread sets different module name
+    std::thread worker([]() {
+        oneplog::NameManager::SetModuleName("worker");
+        log::Info("Worker thread message");
+    });
+    worker.join();
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### Module Name Inheritance
+
+When creating threads with `ThreadWithModuleName`, child threads automatically inherit the parent thread's module name:
+
+```cpp
+#include <oneplog/oneplog.hpp>
+
+int main() {
+    oneplog::Init();
+    
+    // Set parent thread module name
+    oneplog::NameManager::SetModuleName("supervisor");
+    
+    // Child thread automatically inherits "supervisor" module name
+    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+        // GetModuleName() returns "supervisor"
+        log::Info("Child module: {}", oneplog::NameManager::GetModuleName());
+    });
+    childThread.join();
+    
+    // You can also specify a specific module name for child thread
+    auto namedThread = oneplog::ThreadWithModuleName::CreateWithName("custom_module", []() {
+        log::Info("Custom module: {}", oneplog::NameManager::GetModuleName());
+    });
+    namedThread.join();
+    
+    oneplog::Shutdown();
+    return 0;
+}
+```
+
+### Name Storage in Different Modes
+
+| Mode | Process Name Storage | Module Name Storage |
+|------|---------------------|---------------------|
+| Sync | thread_local | thread_local |
+| Async | Global variable | Heap-based TID-to-module-name table |
+| MProc | Shared memory | Shared memory |
 
 ## Operating Modes
 
@@ -126,51 +223,47 @@ When forking child processes, each child must create its own logger:
 #include <sys/wait.h>
 
 void RunChildProcess(int childId) {
-    // Child process must create a new logger
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
+    // Child process uses sync mode initialization
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     // Set process name for identification
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("child" + std::to_string(childId));
-    logger->SetFormat(format);
-
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
     // Log messages
-    logger->Info("[Child {}] Message", childId);
-    logger->Flush();
+    log::Info("[Child {}] Message", childId);
+    log::Flush();
 }
 
 int main() {
-    // Parent logger
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    auto consoleSink = std::make_shared<oneplog::ConsoleSink>();
-    logger->SetSink(consoleSink);
-    logger->Init();
+    // Parent process uses sync mode initialization
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("parent");
-    logger->SetFormat(format);
-    oneplog::SetDefaultLogger(logger);
+    oneplog::SetFormat(format);
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process
+        // Child process - reinitialize
+        oneplog::Shutdown();
         RunChildProcess(0);
         _exit(0);  // Use _exit to avoid flushing parent's buffers
     } else if (pid > 0) {
         // Parent process
-        logger->Info("[Parent] Message");
+        log::Info("[Parent] Message");
         
         int status;
         waitpid(pid, &status, 0);
     }
 
-    logger->Flush();
+    log::Flush();
     return 0;
 }
 ```
@@ -188,29 +281,29 @@ extern char** environ;
 
 // Child process entry (determined by command line arguments)
 void RunAsChild(int childId) {
-    auto logger = std::make_shared<oneplog::Logger>("child_logger", oneplog::Mode::Sync);
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init();
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("child" + std::to_string(childId));
-    logger->SetFormat(format);
+    oneplog::SetFormat(format);
 
-    logger->Info("[Child {}] Started, PID={}", childId, getpid());
-    logger->Flush();
+    log::Info("[Child {}] Started, PID={}", childId, getpid());
+    log::Flush();
 }
 
 // Parent process entry
 void RunAsParent(const char* programPath) {
-    auto logger = std::make_shared<oneplog::Logger>("parent_logger", oneplog::Mode::Sync);
-    logger->SetSink(std::make_shared<oneplog::ConsoleSink>());
-    logger->Init();
+    oneplog::LoggerConfig config;
+    config.mode = oneplog::Mode::Sync;
+    oneplog::Init(config);
 
     auto format = std::make_shared<oneplog::ConsoleFormat>();
     format->SetProcessName("parent");
-    logger->SetFormat(format);
+    oneplog::SetFormat(format);
 
-    logger->Info("[Parent] Starting, PID={}", getpid());
+    log::Info("[Parent] Starting, PID={}", getpid());
 
     // Launch child process using posix_spawn
     pid_t pid;
@@ -222,13 +315,13 @@ void RunAsParent(const char* programPath) {
     };
 
     if (posix_spawn(&pid, programPath, nullptr, nullptr, argv, environ) == 0) {
-        logger->Info("[Parent] Spawned child with PID={}", pid);
+        log::Info("[Parent] Spawned child with PID={}", pid);
         
         int status;
         waitpid(pid, &status, 0);
     }
 
-    logger->Flush();
+    log::Flush();
 }
 
 int main(int argc, char* argv[]) {
