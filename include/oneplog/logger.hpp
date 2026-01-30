@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -626,46 +627,58 @@ private:
     }
 
     template<Level LogLevel, typename... Args>
-    void LogImpl(const SourceLocation& loc, const char* fmt, Args&&... args) {
-        uint64_t timestamp = GetNanosecondTimestamp();
-        
-        if constexpr (M == Mode::Sync) {
-            ProcessEntrySyncDirect(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
-        } else {
-            ProcessEntryAsync(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
+    void LogImpl(const SourceLocation& loc, const char* fmt, Args&&... args) noexcept {
+        try {
+            uint64_t timestamp = GetNanosecondTimestamp();
+            
+            if constexpr (M == Mode::Sync) {
+                ProcessEntrySyncDirect(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
+            } else {
+                ProcessEntryAsync(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
+            }
+        } catch (const std::exception& e) {
+            FallbackToStderr(LogLevel, fmt, e.what());
+        } catch (...) {
+            FallbackToStderr(LogLevel, fmt, "unknown exception");
         }
     }
 
     template<Level LogLevel, typename... Args>
-    void LogWFCImpl(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (M == Mode::Sync) {
-                LogImpl<LogLevel>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
-            } else {
-                LogEntry entry;
-                entry.timestamp = GetNanosecondTimestamp();
-                entry.level = LogLevel;
-                entry.threadId = GetCurrentThreadId();
-                entry.processId = GetCurrentProcessId();
+    void LogWFCImpl(const char* fmt, Args&&... args) noexcept {
+        try {
+            if constexpr (EnableWFC) {
+                if constexpr (M == Mode::Sync) {
+                    LogImpl<LogLevel>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+                } else {
+                    LogEntry entry;
+                    entry.timestamp = GetNanosecondTimestamp();
+                    entry.level = LogLevel;
+                    entry.threadId = GetCurrentThreadId();
+                    entry.processId = GetCurrentProcessId();
 
 #ifndef NDEBUG
-                auto loc = ONEPLOG_CURRENT_LOCATION;
-                entry.file = loc.file;
-                entry.function = loc.function;
-                entry.line = loc.line;
+                    auto loc = ONEPLOG_CURRENT_LOCATION;
+                    entry.file = loc.file;
+                    entry.function = loc.function;
+                    entry.line = loc.line;
 #endif
 
-                if constexpr (sizeof...(Args) == 0) {
-                    entry.snapshot.CaptureStringView(std::string_view(fmt));
-                } else {
-                    entry.snapshot.CaptureStringView(std::string_view(fmt));
-                    entry.snapshot.Capture(std::forward<Args>(args)...);
-                }
+                    if constexpr (sizeof...(Args) == 0) {
+                        entry.snapshot.CaptureStringView(std::string_view(fmt));
+                    } else {
+                        entry.snapshot.CaptureStringView(std::string_view(fmt));
+                        entry.snapshot.Capture(std::forward<Args>(args)...);
+                    }
 
-                if (m_heapRingBuffer) {
-                    m_heapRingBuffer->TryPushWFC(std::move(entry));
+                    if (m_heapRingBuffer) {
+                        m_heapRingBuffer->TryPushWFC(std::move(entry));
+                    }
                 }
             }
+        } catch (const std::exception& e) {
+            FallbackToStderr(LogLevel, fmt, e.what());
+        } catch (...) {
+            FallbackToStderr(LogLevel, fmt, "unknown exception");
         }
     }
 
@@ -797,6 +810,28 @@ private:
     // =========================================================================
     // Helper Functions / 辅助函数
     // =========================================================================
+
+    /**
+     * @brief Fallback to stderr when logging fails
+     * @brief 日志记录失败时降级到 stderr
+     *
+     * This ensures the program doesn't crash due to logging errors.
+     * 这确保程序不会因日志错误而崩溃。
+     */
+    static void FallbackToStderr(Level level, const char* fmt, const char* error) noexcept {
+        try {
+            // Use fprintf for maximum safety (no exceptions)
+            // 使用 fprintf 以获得最大安全性（无异常）
+            std::fprintf(stderr, "[oneplog] LOGGING FAILED [%s]: format=\"%s\", error=\"%s\"\n",
+                         LevelToString(level, LevelNameStyle::Short4).data(),
+                         fmt ? fmt : "(null)",
+                         error ? error : "(null)");
+            std::fflush(stderr);
+        } catch (...) {
+            // Last resort: ignore all errors
+            // 最后手段：忽略所有错误
+        }
+    }
 
     static uint64_t GetNanosecondTimestamp() {
         auto now = std::chrono::system_clock::now();

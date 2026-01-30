@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 project(oneplog
-    VERSION 0.1.0
+    VERSION 0.1.3
     DESCRIPTION "High performance C++17 multi-process logging system"
     LANGUAGES CXX
 )
