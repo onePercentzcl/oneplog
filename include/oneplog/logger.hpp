@@ -564,7 +564,7 @@ private:
         }
 
         // Initialize NameManager for name resolution / 初始化 NameManager 用于名称解析
-        NameManager<EnableWFC>::Initialize(M, nullptr);
+        NameManager<EnableWFC>::Initialize(M);
         
         // Set process name if provided / 如果提供了进程名则设置
         if (!config.processName.empty()) {
@@ -1239,40 +1239,6 @@ inline void CriticalWFC(const char* fmt, Args&&... args) {
     if (logger) {
         logger->CriticalWFC(fmt, std::forward<Args>(args)...);
     }
-}
-
-// ==============================================================================
-// Global Name Settings / 全局名称设置
-// ==============================================================================
-
-namespace detail {
-
-inline std::string& GetProcessNameRef() {
-    static std::string processName;
-    return processName;
-}
-
-inline std::string& GetModuleNameRef() {
-    static std::string moduleName;
-    return moduleName;
-}
-
-}  // namespace detail
-
-inline void SetProcessName(const std::string& name) {
-    detail::GetProcessNameRef() = name;
-}
-
-inline const std::string& GetProcessName() {
-    return detail::GetProcessNameRef();
-}
-
-inline void SetModuleName(const std::string& name) {
-    detail::GetModuleNameRef() = name;
-}
-
-inline const std::string& GetModuleName() {
-    return detail::GetModuleNameRef();
 }
 
 }  // namespace oneplog

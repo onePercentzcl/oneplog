@@ -163,6 +163,12 @@ int main() {
 
 onePlog 支持为日志设置进程名和模块名，便于在多进程、多线程环境中识别日志来源。
 
+### 设计原则
+
+- **进程名和模块名属于进程/线程，而不是 Logger 对象**
+- 进程名是全局常量，应在程序启动时设置一次
+- 模块名是线程局部变量，每个线程可以设置自己的模块名
+
 ### 设置进程名
 
 ```cpp
@@ -174,11 +180,14 @@ int main() {
     config.processName = "my_app";
     oneplog::Init(config);
     
-    // 方式 2：初始化后设置
-    oneplog::NameManager::SetProcessName("my_app");
+    // 方式 2：使用全局函数设置（推荐）
+    oneplog::SetProcessName("my_app");
+    
+    // 方式 3：使用 NameManager 设置
+    oneplog::NameManager<>::SetProcessName("my_app");
     
     // 获取进程名
-    std::string name = oneplog::NameManager::GetProcessName();
+    std::string name = oneplog::GetProcessName();
     
     log::Info("Process name: {}", name);
     
@@ -201,12 +210,12 @@ int main() {
     oneplog::Init(config);
     
     // 主线程设置模块名
-    oneplog::NameManager::SetModuleName("main");
+    oneplog::SetModuleName("main");
     log::Info("Main thread message");
     
     // 工作线程设置不同的模块名
     std::thread worker([]() {
-        oneplog::NameManager::SetModuleName("worker");
+        oneplog::SetModuleName("worker");
         log::Info("Worker thread message");
     });
     worker.join();
@@ -227,18 +236,18 @@ int main() {
     oneplog::Init();
     
     // 设置父线程模块名
-    oneplog::NameManager::SetModuleName("supervisor");
+    oneplog::SetModuleName("supervisor");
     
     // 子线程自动继承 "supervisor" 模块名
-    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+    auto childThread = oneplog::ThreadWithModuleName<>::Create([]() {
         // GetModuleName() 返回 "supervisor"
-        log::Info("Child module: {}", oneplog::NameManager::GetModuleName());
+        log::Info("Child module: {}", oneplog::GetModuleName());
     });
     childThread.join();
     
     // 也可以为子线程指定特定的模块名
-    auto namedThread = oneplog::ThreadWithModuleName::CreateWithName("custom_module", []() {
-        log::Info("Custom module: {}", oneplog::NameManager::GetModuleName());
+    auto namedThread = oneplog::ThreadWithModuleName<>::CreateWithName("custom_module", []() {
+        log::Info("Custom module: {}", oneplog::GetModuleName());
     });
     namedThread.join();
     
@@ -249,11 +258,11 @@ int main() {
 
 ### 三种模式下的名称存储
 
-| 模式 | 进程名存储 | 模块名存储 |
-|------|-----------|-----------|
-| Sync | thread_local | thread_local |
-| Async | 全局变量 | 堆上的 TID-模块名映射表 |
-| MProc | 共享内存 | 共享内存 |
+| 模式 | 进程名存储 | 模块名存储 | 说明 |
+|------|-----------|-----------|------|
+| Sync | 全局变量 | thread_local | Sink 可直接访问 |
+| Async | 全局变量 | thread_local + 堆上 TID-模块名表 | WriterThread 通过 TID 查表 |
+| MProc | 全局变量 + 共享内存 | thread_local + 共享内存 | 消费者进程通过共享内存查表 |
 
 ## 运行模式
 

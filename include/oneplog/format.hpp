@@ -176,26 +176,40 @@ public:
     const std::string& GetModuleName() const { return m_moduleName; }
 
     /**
-     * @brief Resolve process name from NameManager by ID
-     * @brief 通过 ID 从 NameManager 解析进程名
+     * @brief Resolve process name (global constant)
+     * @brief 解析进程名（全局常量）
      *
-     * @param processId Process ID (0 for current) / 进程 ID（0 表示当前）
+     * @param processId Process ID (for MProc consumer lookup) / 进程 ID（用于 MProc 消费者查找）
      * @return Resolved process name (padded to 6 chars) / 解析后的进程名（填充到 6 字符）
      */
     static std::string ResolveProcessName(uint32_t processId = 0) {
-        std::string name = NameManager<>::GetProcessName(processId);
-        return PadOrTruncate(name, 6);
+        // For MProc consumer: lookup by PID
+        if (processId != 0) {
+            std::string name = NameManager<>::GetProcessName(processId);
+            return PadOrTruncate(name, 6);
+        }
+        // For local process: use global process name
+        return PadOrTruncate(oneplog::GetProcessName(), 6);
     }
 
     /**
-     * @brief Resolve module name from NameManager by thread ID
-     * @brief 通过线程 ID 从 NameManager 解析模块名
+     * @brief Resolve module name by thread ID
+     * @brief 通过线程 ID 解析模块名
      *
-     * @param threadId Thread ID (0 for current) / 线程 ID（0 表示当前）
+     * For Sync mode: returns current thread's module name (thread_local)
+     * For Async mode: looks up from TID-module table
+     * For MProc consumer: looks up from shared memory
+     *
+     * @param threadId Thread ID (0 for current thread) / 线程 ID（0 表示当前线程）
      * @return Resolved module name (padded to 6 chars) / 解析后的模块名（填充到 6 字符）
      */
     static std::string ResolveModuleName(uint32_t threadId = 0) {
-        std::string name = NameManager<>::GetModuleName(threadId);
+        // For current thread (Sync mode or direct call)
+        if (threadId == 0) {
+            return PadOrTruncate(oneplog::GetModuleName(), 6);
+        }
+        // For Async/MProc: lookup by TID
+        std::string name = LookupModuleName(threadId);
         return PadOrTruncate(name, 6);
     }
 

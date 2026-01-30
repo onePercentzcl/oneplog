@@ -19,6 +19,10 @@
 namespace oneplog {
 namespace test {
 
+// Type alias for SharedMemory with default template parameter
+// 使用默认模板参数的 SharedMemory 类型别名
+using SharedMemory = oneplog::SharedMemory<true>;
+
 // ==============================================================================
 // Test Fixture / 测试夹具
 // ==============================================================================

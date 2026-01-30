@@ -126,10 +126,16 @@ protected:
     void SetUp() override {
         // Ensure clean state / 确保干净状态
         NameManager<>::Shutdown();
+        // Reset global names to default / 重置全局名称为默认值
+        oneplog::SetProcessName("main");
+        oneplog::SetModuleName("main");
     }
 
     void TearDown() override {
         NameManager<>::Shutdown();
+        // Reset global names to default / 重置全局名称为默认值
+        oneplog::SetProcessName("main");
+        oneplog::SetModuleName("main");
     }
 };
 
@@ -149,14 +155,15 @@ TEST_F(NameManagerTest, InitializeAndShutdown) {
 }
 
 /**
- * @brief Test double initialization (should be idempotent)
- * @brief 测试重复初始化（应该是幂等的）
+ * @brief Test double initialization (mode can be changed)
+ * @brief 测试重复初始化（模式可以改变）
  */
 TEST_F(NameManagerTest, DoubleInitialization) {
     NameManager<>::Initialize(Mode::Async);
-    NameManager<>::Initialize(Mode::Sync);  // Should be ignored / 应该被忽略
+    EXPECT_EQ(NameManager<>::GetMode(), Mode::Async);
     
-    EXPECT_EQ(NameManager<>::GetMode(), Mode::Async);  // First mode should persist / 第一个模式应保持
+    NameManager<>::Initialize(Mode::Sync);  // Mode can be changed / 模式可以改变
+    EXPECT_EQ(NameManager<>::GetMode(), Mode::Sync);  // New mode should be set / 新模式应被设置
 }
 
 /**
@@ -218,29 +225,21 @@ TEST_F(NameManagerTest, DefaultValues) {
 }
 
 /**
- * @brief Test name truncation
- * @brief 测试名称截断
+ * @brief Test name storage (no truncation at storage level)
+ * @brief 测试名称存储（存储层不截断）
+ *
+ * Note: Name truncation happens at format level, not at storage level.
+ * 注意：名称截断发生在格式化层，而不是存储层。
  */
-TEST_F(NameManagerTest, NameTruncation) {
+TEST_F(NameManagerTest, NameStorage) {
     NameManager<>::Initialize(Mode::Async);
     
     std::string longName(50, 'a');  // 50 character name / 50 字符名称
     NameManager<>::SetProcessName(longName);
     
     std::string result = NameManager<>::GetProcessName();
-    EXPECT_EQ(result.length(), 31);  // Should be truncated to 31 / 应截断到 31
-}
-
-/**
- * @brief Test GetRegisteredProcessId and GetRegisteredThreadId
- * @brief 测试 GetRegisteredProcessId 和 GetRegisteredThreadId
- */
-TEST_F(NameManagerTest, RegisteredIds) {
-    NameManager<>::Initialize(Mode::Async);
-    
-    // In Async mode, these should return 0 / 在 Async 模式下，这些应返回 0
-    EXPECT_EQ(NameManager<>::GetRegisteredProcessId(), 0);
-    EXPECT_EQ(NameManager<>::GetRegisteredThreadId(), 0);
+    EXPECT_EQ(result.length(), 50);  // Full name is stored / 完整名称被存储
+    EXPECT_EQ(result, longName);
 }
 
 /**
@@ -422,20 +421,23 @@ TEST_F(ThreadWithModuleNameTest, ExplicitOverridesInheritance) {
 }
 
 /**
- * @brief Test thread with arguments
- * @brief 测试带参数的线程
+ * @brief Test thread with lambda capturing arguments
+ * @brief 测试使用 lambda 捕获参数的线程
  */
-TEST_F(ThreadWithModuleNameTest, ThreadWithArguments) {
+TEST_F(ThreadWithModuleNameTest, ThreadWithLambdaCapture) {
     NameManager<>::Initialize(Mode::Async);
     NameManager<>::SetModuleName("worker");
     
     int result = 0;
     std::string moduleName;
+    int a = 10, b = 20;
     
-    auto thread = ThreadWithModuleName<>::Create([&](int a, int b) {
+    // Use lambda capture instead of passing arguments directly
+    // 使用 lambda 捕获而不是直接传递参数
+    auto thread = ThreadWithModuleName<>::Create([&]() {
         moduleName = NameManager<>::GetModuleName();
         result = a + b;
-    }, 10, 20);
+    });
     thread.join();
     
     EXPECT_EQ(result, 30);

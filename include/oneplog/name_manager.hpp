@@ -3,11 +3,24 @@
  * @brief Process and module name management for onePlog
  * @brief onePlog 的进程名和模块名管理
  *
- * Provides name storage and lookup mechanisms for three operating modes:
- * 为三种运行模式提供名称存储和查找机制：
- * - Sync: thread_local storage for both process and module names
- * - Async: global process name + heap-based TID-to-module-name table
- * - MProc: shared memory ProcessThreadNameTable
+ * Design principles / 设计原则：
+ * - Process name and module name belong to process/thread, NOT to Logger
+ * - 进程名和模块名属于进程/线程，而不是 Logger 对象
+ *
+ * Storage mechanisms for different modes / 不同模式的存储机制：
+ * - Sync: Process name is global constant, module name is thread_local
+ *         Sink can directly access both names
+ *         进程名为全局常量，模块名为线程局部变量，Sink 可直接访问
+ *
+ * - Async: Process name is global constant, module name is thread_local
+ *          BUT WriterThread cannot see thread_local, so need TID-to-name table on heap
+ *          进程名为全局常量，模块名为线程局部变量
+ *          但 WriterThread 看不到 thread_local，所以需要堆上的 TID-模块名对照表
+ *
+ * - MProc: Process name is global constant, module name is thread_local
+ *          Consumer process needs shared memory PID/TID-to-name table
+ *          进程名为全局常量，模块名为线程局部变量
+ *          消费者进程需要共享内存中的 PID/TID-名称对照表
  *
  * @copyright Copyright (c) 2024 onePlog
  */
@@ -15,14 +28,12 @@
 #pragma once
 
 #include "oneplog/common.hpp"
-#include "oneplog/shared_memory.hpp"
 
 #include <atomic>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <thread>
-#include <tuple>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -34,12 +45,93 @@
 namespace oneplog {
 
 // ==============================================================================
-// ThreadModuleTable - Thread-safe TID to Module Name Mapping / 线程安全的 TID-模块名映射表
+// Global Process Name / 全局进程名
+// ==============================================================================
+
+/**
+ * @brief Global process name (compile-time or early runtime constant)
+ * @brief 全局进程名（编译期或早期运行时常量）
+ *
+ * This should be set once at program startup and never changed.
+ * 应该在程序启动时设置一次，之后不再改变。
+ */
+namespace detail {
+
+inline std::string& GetGlobalProcessName() {
+    static std::string processName = "main";
+    return processName;
+}
+
+}  // namespace detail
+
+/**
+ * @brief Set global process name (call once at startup)
+ * @brief 设置全局进程名（启动时调用一次）
+ */
+inline void SetProcessName(const std::string& name) {
+    detail::GetGlobalProcessName() = name;
+}
+
+/**
+ * @brief Get global process name
+ * @brief 获取全局进程名
+ */
+inline const std::string& GetProcessName() {
+    return detail::GetGlobalProcessName();
+}
+
+// ==============================================================================
+// Thread-local Module Name / 线程局部模块名
+// ==============================================================================
+
+namespace detail {
+
+inline thread_local std::string tls_moduleName = "main";
+
+inline uint32_t GetCurrentThreadIdInternal() {
+#ifdef _WIN32
+    return static_cast<uint32_t>(::GetCurrentThreadId());
+#elif defined(__APPLE__)
+    uint64_t tid;
+    pthread_threadid_np(nullptr, &tid);
+    return static_cast<uint32_t>(tid);
+#else
+    return static_cast<uint32_t>(pthread_self());
+#endif
+}
+
+}  // namespace detail
+
+/**
+ * @brief Set module name for current thread
+ * @brief 设置当前线程的模块名
+ */
+inline void SetModuleName(const std::string& name) {
+    detail::tls_moduleName = name;
+}
+
+/**
+ * @brief Get module name for current thread
+ * @brief 获取当前线程的模块名
+ */
+inline const std::string& GetModuleName() {
+    return detail::tls_moduleName;
+}
+
+// ==============================================================================
+// ThreadModuleTable - TID to Module Name Mapping for Async Mode
+// TID-模块名映射表，用于异步模式
 // ==============================================================================
 
 /**
  * @brief Thread-safe TID to module name mapping table for Async mode
  * @brief 用于 Async 模式的线程安全 TID 到模块名映射表
+ *
+ * In Async mode, WriterThread cannot access thread_local variables of other threads.
+ * This table allows WriterThread to lookup module name by TID.
+ *
+ * 在异步模式下，WriterThread 无法访问其他线程的 thread_local 变量。
+ * 此表允许 WriterThread 通过 TID 查找模块名。
  */
 class ThreadModuleTable {
 public:
@@ -54,7 +146,12 @@ public:
     ThreadModuleTable(ThreadModuleTable&&) = delete;
     ThreadModuleTable& operator=(ThreadModuleTable&&) = delete;
 
+    /**
+     * @brief Register or update module name for a thread
+     * @brief 注册或更新线程的模块名
+     */
     bool Register(uint32_t threadId, const std::string& name) {
+        // First, try to find existing entry
         size_t count = m_count.load(std::memory_order_acquire);
         for (size_t i = 0; i < count && i < kMaxEntries; ++i) {
             if (m_entries[i].valid.load(std::memory_order_acquire) &&
@@ -64,6 +161,7 @@ public:
             }
         }
 
+        // Add new entry
         size_t newIndex = m_count.fetch_add(1, std::memory_order_acq_rel);
         if (newIndex >= kMaxEntries) {
             m_count.fetch_sub(1, std::memory_order_relaxed);
@@ -76,6 +174,10 @@ public:
         return true;
     }
 
+    /**
+     * @brief Get module name by thread ID
+     * @brief 通过线程 ID 获取模块名
+     */
     std::string GetName(uint32_t threadId) const {
         size_t count = m_count.load(std::memory_order_acquire);
         for (size_t i = 0; i < count && i < kMaxEntries; ++i) {
@@ -116,58 +218,64 @@ private:
 };
 
 // ==============================================================================
-// NameManagerState - Global State for Name Management / 名称管理的全局状态
+// Global ThreadModuleTable for Async Mode / 异步模式的全局 TID-模块名表
 // ==============================================================================
 
 namespace detail {
 
-// Thread-local storage / 线程局部存储
-inline thread_local std::string tls_processName = "main";
-inline thread_local std::string tls_moduleName = "main";
-inline thread_local uint32_t tls_registeredThreadId = 0;
-inline thread_local bool tls_moduleNameInitialized = false;
-
-inline uint32_t GetCurrentThreadIdInternal() {
-#ifdef _WIN32
-    return static_cast<uint32_t>(::GetCurrentThreadId());
-#elif defined(__APPLE__)
-    uint64_t tid;
-    pthread_threadid_np(nullptr, &tid);
-    return static_cast<uint32_t>(tid);
-#else
-    return static_cast<uint32_t>(pthread_self());
-#endif
-}
-
-/**
- * @brief Global state for name management (template version)
- * @brief 名称管理的全局状态（模板版本）
- */
-template<bool EnableWFC>
-struct NameManagerState {
-    Mode mode{Mode::Async};
-    SharedMemory<EnableWFC>* sharedMemory{nullptr};
-    std::unique_ptr<ThreadModuleTable> threadModuleTable;
-    std::string globalProcessName{"main"};
-    uint32_t registeredProcessId{0};
-    std::atomic<bool> initialized{false};
-};
-
-template<bool EnableWFC>
-inline NameManagerState<EnableWFC>& GetNameManagerState() {
-    static NameManagerState<EnableWFC> state;
-    return state;
+inline ThreadModuleTable& GetGlobalThreadModuleTable() {
+    static ThreadModuleTable table;
+    return table;
 }
 
 }  // namespace detail
 
+/**
+ * @brief Register current thread's module name to global table (for Async mode)
+ * @brief 将当前线程的模块名注册到全局表（用于异步模式）
+ *
+ * Call this after SetModuleName() in Async mode to make the name visible to WriterThread.
+ * 在异步模式下，调用 SetModuleName() 后调用此函数，使模块名对 WriterThread 可见。
+ */
+inline void RegisterModuleName() {
+    uint32_t tid = detail::GetCurrentThreadIdInternal();
+    detail::GetGlobalThreadModuleTable().Register(tid, detail::tls_moduleName);
+}
+
+/**
+ * @brief Set module name and register to global table (convenience function for Async mode)
+ * @brief 设置模块名并注册到全局表（异步模式的便捷函数）
+ */
+inline void SetAndRegisterModuleName(const std::string& name) {
+    SetModuleName(name);
+    RegisterModuleName();
+}
+
+/**
+ * @brief Lookup module name by thread ID from global table
+ * @brief 从全局表中通过线程 ID 查找模块名
+ *
+ * Used by WriterThread in Async mode.
+ * 用于异步模式下的 WriterThread。
+ */
+inline std::string LookupModuleName(uint32_t threadId) {
+    std::string name = detail::GetGlobalThreadModuleTable().GetName(threadId);
+    if (!name.empty()) {
+        return name;
+    }
+    return "main";
+}
+
 // ==============================================================================
-// NameManager - Name Manager Template Class / 名称管理器模板类
+// NameManager - Unified Interface for All Modes / 统一接口
 // ==============================================================================
 
 /**
  * @brief Name manager for process and module names
  * @brief 进程名和模块名管理器
+ *
+ * Provides a unified interface for all three modes.
+ * 为三种模式提供统一接口。
  *
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
  */
@@ -176,198 +284,90 @@ class NameManager {
 public:
     static constexpr size_t kMaxNameLength = 31;
 
-    /**
-     * @brief Initialize the name manager
-     * @brief 初始化名称管理器
-     */
-    static void Initialize(Mode mode, SharedMemory<EnableWFC>* sharedMemory = nullptr) {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-        
-        if (state.initialized.load(std::memory_order_acquire)) {
-            return;
-        }
+    // =========================================================================
+    // Process Name (Global) / 进程名（全局）
+    // =========================================================================
 
-        state.mode = mode;
-        state.sharedMemory = sharedMemory;
-        state.globalProcessName = "main";
-        state.registeredProcessId = 0;
-
-        if (mode == Mode::Async) {
-            state.threadModuleTable = std::make_unique<ThreadModuleTable>();
-        } else {
-            state.threadModuleTable.reset();
-        }
-
-        state.initialized.store(true, std::memory_order_release);
-    }
-
-    /**
-     * @brief Shutdown and cleanup
-     * @brief 关闭并清理资源
-     */
-    static void Shutdown() {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-        
-        if (!state.initialized.load(std::memory_order_acquire)) {
-            return;
-        }
-
-        state.threadModuleTable.reset();
-        state.sharedMemory = nullptr;
-        state.globalProcessName = "main";
-        state.registeredProcessId = 0;
-        state.initialized.store(false, std::memory_order_release);
-    }
-
-    /**
-     * @brief Set process name
-     * @brief 设置进程名
-     */
     static void SetProcessName(const std::string& name) {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-        std::string truncatedName = TruncateName(name);
-
-        switch (state.mode) {
-            case Mode::Sync:
-                detail::tls_processName = truncatedName;
-                break;
-
-            case Mode::Async:
-                state.globalProcessName = truncatedName;
-                break;
-
-            case Mode::MProc:
-                state.globalProcessName = truncatedName;
-                if (state.sharedMemory) {
-                    state.registeredProcessId = state.sharedMemory->RegisterProcess(truncatedName);
-                }
-                break;
-        }
+        oneplog::SetProcessName(name);
+        
+        // Note: For MProc mode with shared memory, call RegisterProcessToSharedMemory()
+        // 注意：对于使用共享内存的 MProc 模式，请调用 RegisterProcessToSharedMemory()
     }
 
-    /**
-     * @brief Get process name by ID
-     * @brief 通过 ID 获取进程名
-     */
     static std::string GetProcessName(uint32_t processId = 0) {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-
-        switch (state.mode) {
-            case Mode::Sync:
-                return detail::tls_processName;
-
-            case Mode::Async:
-                return state.globalProcessName;
-
-            case Mode::MProc:
-                if (processId == 0) {
-                    return state.globalProcessName;
-                }
-                if (state.sharedMemory) {
-                    const char* name = state.sharedMemory->GetProcessName(processId);
-                    if (name && name[0] != '\0') {
-                        return std::string(name);
-                    }
-                }
-                return std::to_string(processId);
+        // For local process or when processId is 0: return global process name
+        // 对于本地进程或 processId 为 0 时：返回全局进程名
+        if (processId == 0) {
+            return oneplog::GetProcessName();
         }
-
-        return "main";
+        
+        // For MProc consumer with non-zero processId: return ID as string
+        // (actual shared memory lookup should be done by the caller with SharedMemory instance)
+        // 对于非零 processId 的 MProc 消费者：返回 ID 字符串
+        // （实际的共享内存查找应由调用者使用 SharedMemory 实例完成）
+        return std::to_string(processId);
     }
 
-    /**
-     * @brief Set module name for current thread
-     * @brief 设置当前线程的模块名
-     */
+    // =========================================================================
+    // Module Name (Thread-local + Table for Async) / 模块名
+    // =========================================================================
+
     static void SetModuleName(const std::string& name) {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-        std::string truncatedName = TruncateName(name);
-
-        switch (state.mode) {
-            case Mode::Sync:
-                detail::tls_moduleName = truncatedName;
-                detail::tls_moduleNameInitialized = true;
-                break;
-
-            case Mode::Async:
-                if (state.threadModuleTable) {
-                    uint32_t tid = detail::GetCurrentThreadIdInternal();
-                    state.threadModuleTable->Register(tid, truncatedName);
-                }
-                break;
-
-            case Mode::MProc:
-                if (state.sharedMemory) {
-                    uint32_t threadId = state.sharedMemory->RegisterThread(truncatedName);
-                    detail::tls_registeredThreadId = threadId;
-                }
-                detail::tls_moduleName = truncatedName;
-                break;
+        oneplog::SetModuleName(name);
+        
+        // For Async mode: also register to global table
+        if (s_mode == Mode::Async) {
+            RegisterModuleName();
         }
+        
+        // Note: For MProc mode with shared memory, call RegisterThreadToSharedMemory()
+        // 注意：对于使用共享内存的 MProc 模式，请调用 RegisterThreadToSharedMemory()
     }
 
-    /**
-     * @brief Get module name by thread ID
-     * @brief 通过线程 ID 获取模块名
-     */
     static std::string GetModuleName(uint32_t threadId = 0) {
-        auto& state = detail::GetNameManagerState<EnableWFC>();
-
-        switch (state.mode) {
-            case Mode::Sync:
-                return detail::tls_moduleName;
-
-            case Mode::Async:
-                if (state.threadModuleTable) {
-                    uint32_t tid = (threadId == 0) ? detail::GetCurrentThreadIdInternal() : threadId;
-                    std::string name = state.threadModuleTable->GetName(tid);
-                    if (!name.empty()) {
-                        return name;
-                    }
-                }
-                return "main";
-
-            case Mode::MProc:
-                if (threadId == 0) {
-                    return detail::tls_moduleName;
-                }
-                if (state.sharedMemory) {
-                    const char* name = state.sharedMemory->GetThreadName(threadId);
-                    if (name && name[0] != '\0') {
-                        return std::string(name);
-                    }
-                }
-                return std::to_string(threadId);
+        // For Sync mode or current thread: return thread_local
+        if (s_mode == Mode::Sync || threadId == 0) {
+            return oneplog::GetModuleName();
         }
-
+        
+        // For Async mode: lookup from global table
+        if (s_mode == Mode::Async) {
+            return LookupModuleName(threadId);
+        }
+        
+        // For MProc consumer with non-zero threadId: return ID as string
+        // (actual shared memory lookup should be done by the caller with SharedMemory instance)
+        // 对于非零 threadId 的 MProc 消费者：返回 ID 字符串
+        // （实际的共享内存查找应由调用者使用 SharedMemory 实例完成）
+        if (s_mode == Mode::MProc && threadId != 0) {
+            return std::to_string(threadId);
+        }
+        
         return "main";
     }
 
-    static Mode GetMode() {
-        return detail::GetNameManagerState<EnableWFC>().mode;
+    // =========================================================================
+    // Initialization / 初始化
+    // =========================================================================
+
+    static void Initialize(Mode mode) {
+        s_mode = mode;
+        s_initialized = true;
     }
 
-    static uint32_t GetRegisteredProcessId() {
-        return detail::GetNameManagerState<EnableWFC>().registeredProcessId;
+    static void Shutdown() {
+        s_initialized = false;
     }
 
-    static uint32_t GetRegisteredThreadId() {
-        return detail::tls_registeredThreadId;
-    }
-
-    static bool IsInitialized() {
-        return detail::GetNameManagerState<EnableWFC>().initialized.load(std::memory_order_acquire);
-    }
+    static bool IsInitialized() { return s_initialized; }
+    static Mode GetMode() { return s_mode; }
 
 private:
     NameManager() = delete;
 
-    static std::string TruncateName(const std::string& name) {
-        if (name.length() <= kMaxNameLength) {
-            return name;
-        }
-        return name.substr(0, kMaxNameLength);
-    }
+    inline static Mode s_mode{Mode::Async};
+    inline static bool s_initialized{false};
 };
 
 // ==============================================================================
@@ -375,38 +375,47 @@ private:
 // ==============================================================================
 
 /**
- * @brief Thread creation helper that inherits module name from parent thread
- * @brief 继承父线程模块名的线程创建辅助类
+ * @brief Thread creation helper that sets module name
+ * @brief 设置模块名的线程创建辅助类
  *
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
  */
 template<bool EnableWFC = false>
 class ThreadWithModuleName {
 public:
-    template<typename Func, typename... Args>
-    static std::thread Create(Func&& func, Args&&... args) {
-        std::string parentModuleName = NameManager<EnableWFC>::GetModuleName();
-        auto argsTuple = std::make_tuple(std::forward<Args>(args)...);
+    /**
+     * @brief Create thread that inherits parent's module name
+     * @brief 创建继承父线程模块名的线程
+     *
+     * Note: This version only supports functions without arguments.
+     * For functions with arguments, use CreateWithName or wrap in a lambda.
+     * 注意：此版本仅支持无参数函数。
+     * 对于有参数的函数，请使用 CreateWithName 或包装在 lambda 中。
+     */
+    template<typename Func>
+    static std::thread Create(Func&& func) {
+        std::string parentModuleName = GetModuleName();
         
-        return std::thread([parentModuleName, 
-                           f = std::forward<Func>(func),
-                           argsTuple = std::move(argsTuple)]() mutable {
-            if (!detail::tls_moduleNameInitialized) {
-                NameManager<EnableWFC>::SetModuleName(parentModuleName);
-            }
-            std::apply(f, std::move(argsTuple));
+        return std::thread([parentModuleName, f = std::forward<Func>(func)]() mutable {
+            NameManager<EnableWFC>::SetModuleName(parentModuleName);
+            f();
         });
     }
 
-    template<typename Func, typename... Args>
-    static std::thread CreateWithName(const std::string& moduleName, Func&& func, Args&&... args) {
-        auto argsTuple = std::make_tuple(std::forward<Args>(args)...);
-        
-        return std::thread([moduleName,
-                           f = std::forward<Func>(func),
-                           argsTuple = std::move(argsTuple)]() mutable {
+    /**
+     * @brief Create thread with explicit module name
+     * @brief 创建具有指定模块名的线程
+     *
+     * Note: This version only supports functions without arguments.
+     * For functions with arguments, wrap in a lambda.
+     * 注意：此版本仅支持无参数函数。
+     * 对于有参数的函数，请包装在 lambda 中。
+     */
+    template<typename Func>
+    static std::thread CreateWithName(const std::string& moduleName, Func&& func) {
+        return std::thread([moduleName, f = std::forward<Func>(func)]() mutable {
             NameManager<EnableWFC>::SetModuleName(moduleName);
-            std::apply(f, std::move(argsTuple));
+            f();
         });
     }
 
@@ -414,27 +423,4 @@ private:
     ThreadWithModuleName() = delete;
 };
 
-// ==============================================================================
-// Global Convenience Functions / 全局便捷函数
-// ==============================================================================
-
-/**
- * @brief Initialize name manager
- * @brief 初始化名称管理器
- */
-template<bool EnableWFC = false>
-inline void InitNameManager(Mode mode, SharedMemory<EnableWFC>* sharedMemory = nullptr) {
-    NameManager<EnableWFC>::Initialize(mode, sharedMemory);
-}
-
-/**
- * @brief Shutdown name manager
- * @brief 关闭名称管理器
- */
-template<bool EnableWFC = false>
-inline void ShutdownNameManager() {
-    NameManager<EnableWFC>::Shutdown();
-}
-
 }  // namespace oneplog
-

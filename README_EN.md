@@ -163,6 +163,12 @@ int main() {
 
 onePlog supports setting process and module names for logs, making it easy to identify log sources in multi-process and multi-threaded environments.
 
+### Design Principles
+
+- **Process name and module name belong to process/thread, NOT to Logger object**
+- Process name is a global constant, should be set once at program startup
+- Module name is thread-local, each thread can set its own module name
+
 ### Setting Process Name
 
 ```cpp
@@ -174,11 +180,14 @@ int main() {
     config.processName = "my_app";
     oneplog::Init(config);
     
-    // Method 2: Set after initialization
-    oneplog::NameManager::SetProcessName("my_app");
+    // Method 2: Use global function (recommended)
+    oneplog::SetProcessName("my_app");
+    
+    // Method 3: Use NameManager
+    oneplog::NameManager<>::SetProcessName("my_app");
     
     // Get process name
-    std::string name = oneplog::NameManager::GetProcessName();
+    std::string name = oneplog::GetProcessName();
     
     log::Info("Process name: {}", name);
     
@@ -201,12 +210,12 @@ int main() {
     oneplog::Init(config);
     
     // Main thread sets module name
-    oneplog::NameManager::SetModuleName("main");
+    oneplog::SetModuleName("main");
     log::Info("Main thread message");
     
     // Worker thread sets different module name
     std::thread worker([]() {
-        oneplog::NameManager::SetModuleName("worker");
+        oneplog::SetModuleName("worker");
         log::Info("Worker thread message");
     });
     worker.join();
@@ -227,18 +236,18 @@ int main() {
     oneplog::Init();
     
     // Set parent thread module name
-    oneplog::NameManager::SetModuleName("supervisor");
+    oneplog::SetModuleName("supervisor");
     
     // Child thread automatically inherits "supervisor" module name
-    auto childThread = oneplog::ThreadWithModuleName::Create([]() {
+    auto childThread = oneplog::ThreadWithModuleName<>::Create([]() {
         // GetModuleName() returns "supervisor"
-        log::Info("Child module: {}", oneplog::NameManager::GetModuleName());
+        log::Info("Child module: {}", oneplog::GetModuleName());
     });
     childThread.join();
     
     // You can also specify a specific module name for child thread
-    auto namedThread = oneplog::ThreadWithModuleName::CreateWithName("custom_module", []() {
-        log::Info("Custom module: {}", oneplog::NameManager::GetModuleName());
+    auto namedThread = oneplog::ThreadWithModuleName<>::CreateWithName("custom_module", []() {
+        log::Info("Custom module: {}", oneplog::GetModuleName());
     });
     namedThread.join();
     
@@ -249,11 +258,11 @@ int main() {
 
 ### Name Storage in Different Modes
 
-| Mode | Process Name Storage | Module Name Storage |
-|------|---------------------|---------------------|
-| Sync | thread_local | thread_local |
-| Async | Global variable | Heap-based TID-to-module-name table |
-| MProc | Shared memory | Shared memory |
+| Mode | Process Name Storage | Module Name Storage | Notes |
+|------|---------------------|---------------------|-------|
+| Sync | Global variable | thread_local | Sink can access directly |
+| Async | Global variable | thread_local + Heap TID-module table | WriterThread looks up by TID |
+| MProc | Global variable + Shared memory | thread_local + Shared memory | Consumer process looks up via shared memory |
 
 ## Operating Modes
 
