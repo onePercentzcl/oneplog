@@ -183,12 +183,11 @@ public:
      * @return Resolved process name (padded to 6 chars) / 解析后的进程名（填充到 6 字符）
      */
     static std::string ResolveProcessName(uint32_t processId = 0) {
-        // For MProc consumer: lookup by PID
-        if (processId != 0) {
-            std::string name = NameManager<>::GetProcessName(processId);
-            return PadOrTruncate(name, 6);
-        }
-        // For local process: use global process name
+        // Always use global process name for local process
+        // 对于本地进程，始终使用全局进程名
+        // Note: processId is only used for MProc consumer mode with SharedMemory lookup
+        // 注意：processId 仅用于 MProc 消费者模式的 SharedMemory 查找
+        (void)processId;  // Unused in current implementation
         return PadOrTruncate(oneplog::GetProcessName(), 6);
     }
 
