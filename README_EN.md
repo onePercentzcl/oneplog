@@ -198,7 +198,7 @@ int main() {
 
 ### Setting Module Name
 
-Each thread can set its own module name:
+Each thread can set its own module name. In Async/MProc mode, `SetModuleName()` automatically registers the module name to the global table, no extra call needed:
 
 ```cpp
 #include <oneplog/oneplog.hpp>
@@ -209,13 +209,13 @@ int main() {
     config.processName = "my_app";
     oneplog::Init(config);
     
-    // Main thread sets module name
+    // Main thread sets module name (auto-registered to global table)
     oneplog::SetModuleName("main");
     log::Info("Main thread message");
     
-    // Worker thread sets different module name
+    // Worker thread sets different module name (auto-registered to global table)
     std::thread worker([]() {
-        oneplog::SetModuleName("worker");
+        oneplog::SetModuleName("worker");  // Auto-registers, no need to call RegisterModuleName()
         log::Info("Worker thread message");
     });
     worker.join();

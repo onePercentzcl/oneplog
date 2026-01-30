@@ -100,14 +100,38 @@ inline uint32_t GetCurrentThreadIdInternal() {
 #endif
 }
 
+/**
+ * @brief Global mode flag for automatic registration
+ * @brief 用于自动注册的全局模式标志
+ *
+ * When true, SetModuleName() will automatically register to global table.
+ * 当为 true 时，SetModuleName() 会自动注册到全局表。
+ */
+inline std::atomic<bool>& GetAutoRegisterFlag() {
+    static std::atomic<bool> autoRegister{false};
+    return autoRegister;
+}
+
 }  // namespace detail
+
+// Forward declaration for RegisterModuleName
+inline void RegisterModuleName();
 
 /**
  * @brief Set module name for current thread
  * @brief 设置当前线程的模块名
+ *
+ * In Async/MProc mode, this automatically registers to the global table.
+ * 在 Async/MProc 模式下，会自动注册到全局表。
  */
 inline void SetModuleName(const std::string& name) {
     detail::tls_moduleName = name;
+    
+    // Auto-register to global table if enabled (Async/MProc mode)
+    // 如果启用了自动注册（Async/MProc 模式），则自动注册到全局表
+    if (detail::GetAutoRegisterFlag().load(std::memory_order_acquire)) {
+        RegisterModuleName();
+    }
 }
 
 /**
@@ -116,6 +140,17 @@ inline void SetModuleName(const std::string& name) {
  */
 inline const std::string& GetModuleName() {
     return detail::tls_moduleName;
+}
+
+/**
+ * @brief Enable/disable automatic registration to global table
+ * @brief 启用/禁用自动注册到全局表
+ *
+ * Called by Logger::Init() based on mode.
+ * 由 Logger::Init() 根据模式调用。
+ */
+inline void SetAutoRegisterModuleName(bool enable) {
+    detail::GetAutoRegisterFlag().store(enable, std::memory_order_release);
 }
 
 // ==============================================================================
@@ -243,12 +278,18 @@ inline void RegisterModuleName() {
 }
 
 /**
- * @brief Set module name and register to global table (convenience function for Async mode)
- * @brief 设置模块名并注册到全局表（异步模式的便捷函数）
+ * @brief Set module name and register to global table
+ * @brief 设置模块名并注册到全局表
+ *
+ * @deprecated In Async/MProc mode, SetModuleName() now auto-registers.
+ *             This function is kept for backward compatibility.
+ * @deprecated 在 Async/MProc 模式下，SetModuleName() 现在会自动注册。
+ *             此函数保留用于向后兼容。
  */
 inline void SetAndRegisterModuleName(const std::string& name) {
     SetModuleName(name);
-    RegisterModuleName();
+    // RegisterModuleName() is now called automatically by SetModuleName()
+    // when auto-register is enabled
 }
 
 /**
@@ -314,12 +355,9 @@ public:
     // =========================================================================
 
     static void SetModuleName(const std::string& name) {
+        // Global SetModuleName() now auto-registers when in Async/MProc mode
+        // 全局 SetModuleName() 现在在 Async/MProc 模式下会自动注册
         oneplog::SetModuleName(name);
-        
-        // For Async mode: also register to global table
-        if (s_mode == Mode::Async) {
-            RegisterModuleName();
-        }
         
         // Note: For MProc mode with shared memory, call RegisterThreadToSharedMemory()
         // 注意：对于使用共享内存的 MProc 模式，请调用 RegisterThreadToSharedMemory()
@@ -354,10 +392,15 @@ public:
     static void Initialize(Mode mode) {
         s_mode = mode;
         s_initialized = true;
+        
+        // Enable auto-registration for Async/MProc modes
+        // 为 Async/MProc 模式启用自动注册
+        SetAutoRegisterModuleName(mode == Mode::Async || mode == Mode::MProc);
     }
 
     static void Shutdown() {
         s_initialized = false;
+        SetAutoRegisterModuleName(false);
     }
 
     static bool IsInitialized() { return s_initialized; }

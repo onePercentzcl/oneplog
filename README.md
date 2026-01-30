@@ -198,7 +198,7 @@ int main() {
 
 ### 设置模块名
 
-每个线程可以设置自己的模块名：
+每个线程可以设置自己的模块名。在 Async/MProc 模式下，`SetModuleName()` 会自动将模块名注册到全局表，无需额外调用：
 
 ```cpp
 #include <oneplog/oneplog.hpp>
@@ -209,13 +209,13 @@ int main() {
     config.processName = "my_app";
     oneplog::Init(config);
     
-    // 主线程设置模块名
+    // 主线程设置模块名（自动注册到全局表）
     oneplog::SetModuleName("main");
     log::Info("Main thread message");
     
-    // 工作线程设置不同的模块名
+    // 工作线程设置不同的模块名（自动注册到全局表）
     std::thread worker([]() {
-        oneplog::SetModuleName("worker");
+        oneplog::SetModuleName("worker");  // 自动注册，无需调用 RegisterModuleName()
         log::Info("Worker thread message");
     });
     worker.join();
