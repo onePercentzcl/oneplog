@@ -53,15 +53,7 @@ end
 -- Source Files / 源文件
 -- ==============================================================================
 local oneplog_sources = {
-    "src/oneplog/log_entry.cpp",
-    "src/oneplog/heap_ring_buffer.cpp",
-    "src/oneplog/shared_ring_buffer.cpp",
-    "src/oneplog/format.cpp",
-    "src/oneplog/sink.cpp",
-    "src/oneplog/pipeline_thread.cpp",
-    "src/oneplog/writer_thread.cpp",
-    "src/oneplog/logger.cpp",
-    "src/oneplog/memory_pool.cpp"
+    "src/oneplog/instantiations.cpp"
 }
 
 -- fmt library sources (when use_fmt is enabled)
@@ -209,15 +201,7 @@ if has_config("examples") then
         add_files("example/benchmark_compare.cpp")
         add_includedirs("include")
         -- Link oneplog sources directly
-        add_files("src/oneplog/log_entry.cpp")
-        add_files("src/oneplog/heap_ring_buffer.cpp")
-        add_files("src/oneplog/shared_ring_buffer.cpp")
-        add_files("src/oneplog/format.cpp")
-        add_files("src/oneplog/sink.cpp")
-        add_files("src/oneplog/pipeline_thread.cpp")
-        add_files("src/oneplog/writer_thread.cpp")
-        add_files("src/oneplog/logger.cpp")
-        add_files("src/oneplog/memory_pool.cpp")
+        add_files("src/oneplog/instantiations.cpp")
         -- Add fmt sources
         add_files("src/fmt/format.cc")
         add_files("src/fmt/os.cc")
