@@ -15,9 +15,9 @@ int main() {
     std::cout << "=== Level Enum Test ===" << std::endl;
     std::cout << "Level::Alert = " << static_cast<int>(Level::Alert) << std::endl;
     std::cout << "Level::Off = " << static_cast<int>(Level::Off) << std::endl;
-    std::cout << "LevelToString(Level::Info, Full) = " << LevelToString(Level::Informational, LevelNameStyle::Full) << std::endl;
-    std::cout << "LevelToString(Level::Info, Short4) = " << LevelToString(Level::Informational, LevelNameStyle::Short4) << std::endl;
-    std::cout << "LevelToString(Level::Info, Short1) = " << LevelToString(Level::Informational, LevelNameStyle::Short1) << std::endl;
+    std::cout << "LevelToString(Level::Info, Full) = " << LevelToString(Level::Info, LevelNameStyle::Full) << std::endl;
+    std::cout << "LevelToString(Level::Info, Short4) = " << LevelToString(Level::Info, LevelNameStyle::Short4) << std::endl;
+    std::cout << "LevelToString(Level::Info, Short1) = " << LevelToString(Level::Info, LevelNameStyle::Short1) << std::endl;
     
     // Test Mode enum
     std::cout << "\n=== Mode Enum Test ===" << std::endl;

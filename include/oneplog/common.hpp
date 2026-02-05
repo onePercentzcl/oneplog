@@ -172,29 +172,29 @@ enum class Level : uint8_t {
     /// 警报：必须立即采取行动（如核心数据库损坏）
     Alert = 0,
 
-    /// Critical: Critical conditions (e.g., hardware device failure)
-    /// 临界：严重情况（如主存储设备失效）
-    Critical = 1,
+    /// Fatal: Fatal conditions (e.g., system crash imminent)
+    /// 致命：致命情况（如系统即将崩溃）
+    Fatal = 1,
 
     /// Error: Runtime errors that do not require immediate action
     /// 错误：运行时错误，不需要立即采取行动但必须记录
     Error = 2,
 
-    /// Warning: Warning messages for potential future issues
+    /// Warn: Warning messages for potential future issues
     /// 警告：警告信息，如果不处理可能导致错误
-    Warning = 3,
+    Warn = 3,
 
     /// Notice: Normal but significant conditions
     /// 通知：正常但具有重大意义的情况
     Notice = 4,
 
-    /// Informational: Routine system messages (e.g., service start/stop)
+    /// Info: Routine system messages (e.g., service start/stop)
     /// 信息：普通的系统消息（如进程启动/停止）
-    Informational = 5,
+    Info = 5,
 
-    /// Debugging: Detailed information for development and troubleshooting
+    /// Debug: Detailed information for development and troubleshooting
     /// 调试：仅在开发和排查故障时使用的详细信息
-    Debugging = 6,
+    Debug = 6,
 
     /// Trace: Most granular tracing information
     /// 追踪：最详细的跟踪信息
@@ -235,20 +235,20 @@ constexpr std::string_view LevelToString(Level level,
     // Standard full names for each level
     // 各个级别的标准全称
     constexpr std::string_view kFullNames[] = {
-        "Alert", "Critical", "Error", "Warning", "Notice", "Informational",
-        "Debugging", "Trace", "Off"
+        "Alert", "Fatal", "Error", "Warn", "Notice", "Info",
+        "Debug", "Trace", "Off"
     };
 
     // 4-character aligned names for consistent formatting
     // 4 字符对齐名称，用于保持格式一致性
     constexpr std::string_view kShort4Names[] = {
-        "ALER", "CRIT", "ERRO", "WARN", "NOTI", "INFO", "DBUG", "TRAC", "OFF"
+        "ALER", "FATL", "ERRO", "WARN", "NOTI", "INFO", "DBUG", "TRAC", "OFF"
     };
 
     // Minimalist 1-character names for high-density logging
     // 极简 1 字符名称，用于高密度日志场景
     constexpr std::string_view kShort1Names[] = {
-        "A", "C", "E", "W", "N", "I", "D", "T", "O"
+        "A", "F", "E", "W", "N", "I", "D", "T", "O"
     };
 
     const auto idx = static_cast<size_t>(level);
@@ -292,23 +292,23 @@ constexpr Level StringToLevel(const std::string_view name) noexcept {
     if (name == "alert" || name == "ALERT" || name == "ALER" || name == "A") {
         return Level::Alert;
     }
-    if (name == "critical" || name == "CRITICAL" || name == "CRIT" || name == "C") {
-        return Level::Critical;
+    if (name == "fatal" || name == "FATAL" || name == "FATL" || name == "F") {
+        return Level::Fatal;
     }
     if (name == "error" || name == "ERROR" || name == "ERRO" || name == "E") {
         return Level::Error;
     }
-    if (name == "warning" || name == "WARNING" || name == "WARN" || name == "W") {
-        return Level::Warning;
+    if (name == "warn" || name == "WARN" || name == "W") {
+        return Level::Warn;
     }
     if (name == "notice" || name == "NOTICE" || name == "NOTI" || name == "N") {
         return Level::Notice;
     }
-    if (name == "informational" || name == "INFORMATIONAL" || name == "INFO" || name == "I") {
-        return Level::Informational;
+    if (name == "info" || name == "INFO" || name == "I") {
+        return Level::Info;
     }
-    if (name == "debugging" || name == "DEBUGGING" || name == "DBUG" || name == "D") {
-        return Level::Debugging;
+    if (name == "debug" || name == "DEBUG" || name == "DBUG" || name == "D") {
+        return Level::Debug;
     }
     if (name == "trace" || name == "TRACE" || name == "TRAC" || name == "T") {
         return Level::Trace;
