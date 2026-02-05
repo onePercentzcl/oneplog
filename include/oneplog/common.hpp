@@ -9,10 +9,9 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
-#include <chrono>
-#include <thread>
-#include <vector>
 
 // Check if the standard library supports hardware interference size (C++17) to prevent false sharing
 // 检查标准库是否支持硬件干扰尺寸（C++17），用于防止伪共享
@@ -20,31 +19,15 @@
 #include <new> // Required for std::hardware_destructive_interference_size / 包含此头文件以使用该特性
 #endif
 
-// Platform-specific includes: Handle differences between Linux and macOS (Darwin)
-// 平台特定包含：处理 Linux 和 macOS (Darwin) 之间的差异
-#ifdef __linux__
-// Linux specific: eventfd is used for efficient inter-process/thread notification
-// Linux 特定：eventfd 用于高效的进程/线程间通知
-#include <sys/eventfd.h>
-#include <unistd.h>
-#include <poll.h>
-#elif defined(__APPLE__)
-// Apple specific: Use Grand Central Dispatch (GCD) for signaling on macOS/iOS
-// Apple 特定：在 macOS/iOS 上使用 GCD 进行信号通知
-#include <dispatch/dispatch.h>
-#include <unistd.h>
-#endif
-
 namespace oneplog::internal {
 // ==============================================================================
 // Cache Line Size / 缓存行大小
 // ==============================================================================
+
 /**
- * @brief Log level enumeration (compatible with syslog/spdlog)
+ * @brief Get system cache line size
  * @brief 获取系统缓存行大小
  */
-// Check if the standard library provides hardware interference size constants
-// 检查标准库是否提供了硬件干扰尺寸常量
 #if defined(__cpp_lib_hardware_interference_size) && __cpp_lib_hardware_interference_size >= 201703L
 /**
  * @brief Use the hardware-specific cache line size to prevent false sharing
@@ -60,91 +43,6 @@ constexpr std::size_t kCacheLineSize = std::hardware_destructive_interference_si
  */
 constexpr std::size_t kCacheLineSize = 64;
 #endif
-
-// ==============================================================================
-// CacheLineAligned / 缓存行对齐
-// ==============================================================================
-
-/**
- * @brief A wrapper that aligns type T to the hardware cache line boundary.
- * @brief 将类型 T 对齐到硬件缓存行边界的包装器。
- * * @details This prevents "False Sharing" where multiple threads modify different
- * variables residing on the same cache line, causing significant performance degradation.
- * @details 这可以防止“伪共享”现象，即多个线程修改位于同一缓存行上的不同变量，从而导致严重的性能下降。
- * * @tparam T The underlying type to be aligned / 需要对齐的底层类型
- */
-
-
-template <typename T>
-struct alignas(kCacheLineSize) CacheLineAligned {
-    /**
-     * @brief The actual value being stored.
-     * @brief 实际存储的数值。
-     */
-    T value;
-
-    /**
-     * @brief Default constructor.
-     * @brief 默认构造函数。
-     */
-    CacheLineAligned() = default;
-
-    /**
-     * @brief Construct from a constant reference.
-     * @brief 通过常量引用进行构造。
-     */
-    explicit CacheLineAligned(const T& v) : value(v) {
-    }
-
-    /**
-     * @brief Construct by moving a value.
-     * @brief 通过移动语义进行构造。
-     */
-    explicit CacheLineAligned(T&& v) : value(std::move(v)) {
-    }
-
-    /**
-     * @brief Implicit conversion to reference of T.
-     * @brief 隐式转换为 T 的引用。
-     */
-    operator T&() noexcept { return value; }
-
-    /**
-     * @brief Implicit conversion to constant reference of T.
-     * @brief 隐式转换为 T 的常量引用。
-     */
-    operator const T&() const noexcept { return value; }
-
-    /**
-     * @brief Member access operator.
-     * @brief 成员访问运算符。
-     */
-    T* operator->() noexcept { return &value; }
-
-    /**
-     * @brief Constant member access operator.
-     * @brief 常量成员访问运算符。
-     */
-    const T* operator->() const noexcept { return &value; }
-
-    /**
-     * @brief In-place constructor.
-     * @brief 原地构造函数，直接将参数转发给 T 的构造函数。
-     */
-    template <typename... Args>
-    explicit CacheLineAligned(Args&&... args)
-        : value(std::forward<Args>(args)...) {
-    }
-
-    /**
-     * @brief Ensure the type T itself does not exceed a single cache line.
-     * @brief 确保类型 T 本身的大小不会超过单个缓存行。
-     * * @note If T is larger than kCacheLineSize, the alignment might not prevent
-     * interference with adjacent data as effectively.
-     * @note 如果 T 大于 kCacheLineSize，对齐可能无法像预期那样有效地防止与相邻数据的干扰。
-     */
-    static_assert(sizeof(T) <= kCacheLineSize, "Type T is larger than cache line size");
-};
 
 // ==============================================================================
 // Max PID(only Linux) / 最大PID数值（仅Linux）
@@ -210,16 +108,16 @@ enum class Level : uint8_t {
  * @brief 日志级别名称显示样式
  */
 enum class LevelNameStyle : uint8_t {
-    /// Full name style (e.g., "Critical", "Warning", "Informational")
-    /// 全称样式（例如："Critical", "Warning", "Informational"）
+    /// Full name style (e.g., "Fatal", "Warn", "Info")
+    /// 全称样式（例如："Fatal", "Warn", "Info"）
     Full = 0,
 
-    /// 4-character short name for aligned output (e.g., "CRIT", "WARN", "INFO")
-    /// 4 字符缩写样式，方便对齐输出（例如："CRIT", "WARN", "INFO"）
+    /// 4-character short name for aligned output (e.g., "FATL", "WARN", "INFO")
+    /// 4 字符缩写样式，方便对齐输出（例如："FATL", "WARN", "INFO"）
     Short4 = 1,
 
-    /// 1-character minimalist name (e.g., "C", "W", "I")
-    /// 1 字符极简样式（例如："C", "W", "I"）
+    /// 1-character minimalist name (e.g., "F", "W", "I")
+    /// 1 字符极简样式（例如："F", "W", "I"）
     Short1 = 2
 };
 
@@ -254,7 +152,7 @@ constexpr std::string_view LevelToString(Level level,
     const auto idx = static_cast<size_t>(level);
 
     // Handle invalid level index by returning 'Unknown' in requested style
-    // 处理无效的级别索引，按请求的样式返回“未知”标识
+    // 处理无效的级别索引，按请求的样式返回"未知"标识
     if (idx > static_cast<size_t>(Level::Off)) {
         switch (style) {
             case LevelNameStyle::Full:
@@ -762,4 +660,4 @@ constexpr bool IsSuccess(const ErrorCode code) noexcept {
 constexpr bool IsError(const ErrorCode code) noexcept {
     return code != ErrorCode::Success;
 }
-} // namespace oneplog
+} // namespace oneplog::internal
