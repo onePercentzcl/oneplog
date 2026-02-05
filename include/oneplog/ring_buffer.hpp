@@ -197,9 +197,21 @@ struct alignas(kCacheLineSize) Slot {
  * @brief 包含 RingBuffer 控制变量的头部。
  * @details Implements "Hot/Cold Splitting" to separate Producer-owned and Consumer-owned variables.
  * @details 实现了"冷热分离"，将生产者拥有和消费者拥有的变量物理隔离。
+ * 
+ * Memory Layout (3 cache lines):
+ * 内存布局（3 个缓存行）：
+ * 
+ * Cache Line 0: [m_head] - Consumer write hot
+ *               消费者写热点
+ * 
+ * Cache Line 1: [m_cachedHead, m_tail] - Producer read/write hot
+ *               生产者读写热点（m_cachedHead 作为缓冲区隔离 head 和 tail）
+ * 
+ * Cache Line 2: [m_consumerState, m_droppedCount, ...] - Less contended
+ *               低竞争数据
  */
 struct alignas(kCacheLineSize) RingBufferHeader {
-    // === Cache Line 1: Consumer Owned (Write Hot) / 消费者拥有（写热点） ===
+    // === Cache Line 0: Consumer Owned (Write Hot) / 消费者拥有（写热点） ===
 
     /**
      * @brief Head index (Consumer read/write).
@@ -207,19 +219,36 @@ struct alignas(kCacheLineSize) RingBufferHeader {
      */
     alignas(kCacheLineSize) std::atomic<size_t> m_head{0};
 
+    // === Cache Line 1: Producer Owned (Read/Write Hot) / 生产者拥有（读写热点） ===
+    
+    /**
+     * @brief Shadow head for producer-side optimization.
+     * @brief 生产者侧优化的影子头指针。
+     * @details This is a cached copy of head that producers use to avoid
+     *          frequent reads of the actual head. It's always <= actual head,
+     *          providing a conservative estimate of queue fullness.
+     *          Placed between m_head and m_tail to act as a buffer zone,
+     *          reducing false sharing between consumer and producer hot variables.
+     * @details 这是生产者用来避免频繁读取实际 head 的缓存副本。
+     *          它总是 <= 实际 head，提供队列满状态的保守估计。
+     *          放置在 m_head 和 m_tail 之间作为缓冲区，
+     *          减少消费者和生产者热点变量之间的伪共享。
+     */
+    alignas(kCacheLineSize) std::atomic<size_t> m_cachedHead{0};
+    
     /**
      * @brief Tail index (Producer read/write).
      * @brief 尾指针（生产者读/写）。
-     * @note Aligned to start a new cache line to prevent false sharing with m_head.
-     * @note 对齐到新缓存行起始位置，防止与 m_head 发生伪共享。
+     * @note In the same cache line as m_cachedHead for producer locality.
+     * @note 与 m_cachedHead 在同一缓存行以提高生产者局部性。
      */
-    alignas(kCacheLineSize) std::atomic<size_t> m_tail{0};
+    std::atomic<size_t> m_tail{0};
 
+    // === Cache Line 2: Less Contended / 低竞争数据 ===
+    
     /**
      * @brief Consumer active state.
      * @brief 消费者活跃状态。
-     * @note Aligned to avoid "noisy neighbor" effect from m_head or m_tail.
-     * @note 对齐以避免来自 m_head 或 m_tail 的"吵闹邻居"效应。
      */
     alignas(kCacheLineSize) std::atomic<ConsumerState> m_consumerState{ConsumerState::Active};
 
@@ -245,6 +274,7 @@ struct alignas(kCacheLineSize) RingBufferHeader {
     void Init(size_t capacity, QueueFullPolicy policy = QueueFullPolicy::DropNewest) noexcept {
         m_head.store(0, std::memory_order_relaxed);
         m_tail.store(0, std::memory_order_relaxed);
+        m_cachedHead.store(0, std::memory_order_relaxed);
         m_consumerState.store(ConsumerState::Active, std::memory_order_relaxed);
         m_droppedCount.store(0, std::memory_order_relaxed);
         m_capacity = capacity;
@@ -293,6 +323,24 @@ struct alignas(kCacheLineSize) RingBufferHeader {
      */
     size_t FetchAddTail(size_t delta) noexcept {
         return m_tail.fetch_add(delta, std::memory_order_acq_rel);
+    }
+
+    // ========== Cached Head Operations / 缓存头指针操作 ==========
+
+    /**
+     * @brief Get cached head index.
+     * @brief 获取缓存的头指针。
+     */
+    size_t GetCachedHead() const noexcept {
+        return m_cachedHead.load(std::memory_order_acquire);
+    }
+
+    /**
+     * @brief Set cached head index.
+     * @brief 设置缓存的头指针。
+     */
+    void SetCachedHead(size_t value) noexcept {
+        m_cachedHead.store(value, std::memory_order_release);
     }
 
     // ========== Consumer State Operations / 消费者状态操作 ==========
@@ -388,20 +436,14 @@ template <size_t slotSize = 512, size_t slotCount = 1024>
 class alignas(kCacheLineSize) RingBuffer {
 public:
     static constexpr size_t kMaxDataSize = Slot<slotSize>::DataSize();
-
-private:
+    
     /**
-     * @brief Shadow head for producer-side optimization.
-     * @brief 生产者侧优化的影子头指针。
-     * @details This is a cached copy of head that producers use to avoid
-     *          frequent reads of the actual head. It's always <= actual head,
-     *          providing a conservative estimate of queue fullness.
-     * @details 这是生产者用来避免频繁读取实际 head 的缓存副本。
-     *          它总是 <= 实际 head，提供队列满状态的保守估计。
+     * @brief Batch update interval for cached head.
+     * @brief 缓存头指针的批量更新间隔。
+     * @details Consumer updates cached head every kCachedHeadUpdateInterval pops.
+     * @details 消费者每 kCachedHeadUpdateInterval 次弹出更新一次缓存头指针。
      */
-    alignas(kCacheLineSize) std::atomic<size_t> m_cachedHead{0};
-
-public:
+    static constexpr size_t kCachedHeadUpdateInterval = 32;
 
     /**
      * @brief Initialize the ring buffer.
@@ -410,7 +452,6 @@ public:
      */
     void Init(QueueFullPolicy policy = QueueFullPolicy::DropNewest) noexcept {
         m_header.Init(slotCount, policy);
-        m_cachedHead.store(0, std::memory_order_relaxed);
         
         // Initialize all slots to Empty state
         // 初始化所有槽位为空闲状态
@@ -435,9 +476,9 @@ public:
             // 步骤 1：读取当前 tail（即将递增）
             size_t currentTail = m_header.GetTail();
             
-            // Step 2: Read cached head (conservative estimate)
-            // 步骤 2：读取缓存的 head（保守估计）
-            size_t cachedHead = m_cachedHead.load(std::memory_order_acquire);
+            // Step 2: Read cached head (conservative estimate, same cache line as tail)
+            // 步骤 2：读取缓存的 head（保守估计，与 tail 在同一缓存行）
+            size_t cachedHead = m_header.GetCachedHead();
             
             // Step 3: Calculate estimated size
             // 步骤 3：计算估算大小
@@ -449,7 +490,7 @@ public:
                 // Read actual head and update cached head
                 // 读取实际 head 并更新缓存的 head
                 size_t actualHead = m_header.GetHead();
-                m_cachedHead.store(actualHead, std::memory_order_release);
+                m_header.SetCachedHead(actualHead);
                 
                 // Recalculate size with actual head
                 // 使用实际 head 重新计算大小
@@ -656,7 +697,16 @@ public:
         
         // Advance head
         // 推进头指针
-        m_header.SetHead(head + 1);
+        size_t newHead = head + 1;
+        m_header.SetHead(newHead);
+        
+        // Batch update cached head for producers (every kCachedHeadUpdateInterval pops)
+        // 为生产者批量更新缓存的 head（每 kCachedHeadUpdateInterval 次弹出）
+        // This reduces write contention on the cached head cache line
+        // 这减少了对缓存头指针缓存行的写入竞争
+        if ((newHead % kCachedHeadUpdateInterval) == 0) {
+            m_header.SetCachedHead(newHead);
+        }
         
         return true;
     }
