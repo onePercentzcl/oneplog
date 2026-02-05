@@ -184,10 +184,10 @@ public:
     template<typename... Args> void CriticalWFC(const char* fmt, Args&&... args);
     // ... 其他 WFC 方法
     
-    // ALO 方法（始终输出）/ ALO methods (Always Log Output)
-    template<typename... Args> void AlertALO(const char* fmt, Args&&... args);
-    template<typename... Args> void CriticalALO(const char* fmt, Args&&... args);
-    // ... 其他 ALO 方法
+    // OUT 方法（始终输出）/ OUT methods (Output)
+    template<typename... Args> void AlertOUT(const char* fmt, Args&&... args);
+    template<typename... Args> void FatalOUT(const char* fmt, Args&&... args);
+    // ... 其他 OUT 方法
     
     // 刷新 / Flush
     void Flush();
@@ -274,13 +274,13 @@ void Logger<M, L, EnableWFC>::ProcessEntrySyncDirect(Level level, uint64_t times
 }
 ```
 
-### 3. ALO 方法实现（始终输出）
+### 3. OUT 方法实现（始终输出）
 
 ```cpp
 template<Mode M, Level L, bool EnableWFC>
 template<typename... Args>
-void Logger<M, L, EnableWFC>::InfoALO(const char* fmt, Args&&... args) {
-    // ALO 方法绕过编译时和运行时级别检查，始终输出
+void Logger<M, L, EnableWFC>::InfoOUT(const char* fmt, Args&&... args) {
+    // OUT 方法绕过编译时和运行时级别检查，始终输出
     LogImpl<Level::Informational>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
 }
 ```
@@ -346,10 +346,10 @@ void AlertWFC(const char* fmt, Args&&... args) {
     DefaultLogger().AlertWFC(fmt, std::forward<Args>(args)...); 
 }
 
-// 全局 ALO 函数
+// 全局 OUT 函数
 template<typename... Args>
-void AlertALO(const char* fmt, Args&&... args) { 
-    DefaultLogger().AlertALO(fmt, std::forward<Args>(args)...); 
+void AlertOUT(const char* fmt, Args&&... args) { 
+    DefaultLogger().AlertOUT(fmt, std::forward<Args>(args)...); 
 }
 
 } // namespace oneplog
@@ -385,10 +385,10 @@ void AlertALO(const char* fmt, Args&&... args) {
     oneplog::DefaultLogger().AlertWFC(__VA_ARGS__)
 // ... 其他 WFC 宏
 
-// ALO 宏
-#define ONEPLOG_ALERT_ALO(...) \
-    oneplog::DefaultLogger().AlertALO(__VA_ARGS__)
-// ... 其他 ALO 宏
+// OUT 宏
+#define ONEPLOG_ALERT_OUT(...) \
+    oneplog::DefaultLogger().AlertOUT(__VA_ARGS__)
+// ... 其他 OUT 宏
 
 // 条件日志宏
 #define ONEPLOG_IF(condition, level, ...) \
@@ -1977,9 +1977,9 @@ JsonFileSink jsonSink(JsonFormat(), "/var/log/app.json");
 
 **验证: 需求 15.3**
 
-### Property 21: ALO 日志始终输出
+### Property 21: OUT 日志始终输出
 
-*对于任意* 编译时最小级别和运行时级别设置，ALO 日志方法应该始终产生输出，不受任何级别限制。
+*对于任意* 编译时最小级别和运行时级别设置，OUT 日志方法应该始终产生输出，不受任何级别限制。
 
 **验证: 需求 23.4, 23.5**
 
@@ -2030,10 +2030,44 @@ JsonFileSink jsonSink(JsonFormat(), "/var/log/app.json");
 | 队列满（Block） | 阻塞等待 | 消费者处理后自动恢复 |
 | 队列满（DropNewest） | 丢弃新日志，增加计数 | 无需恢复 |
 | 队列满（DropOldest） | 丢弃旧日志，增加计数 | 无需恢复 |
+| **队列满（WFC/OUT 日志）** | **强制阻塞等待** | **确保 WFC/OUT 日志不丢失** |
 | 文件写入失败 | 记录错误，尝试重新打开 | 定期重试打开文件 |
 | 网络连接断开 | 记录错误，缓存日志 | 定期重试连接 |
 | 共享内存创建失败 | 回退到异步模式 | 无 |
 | 配置解析失败 | 使用默认值 | 记录警告 |
+
+### WFC 和 OUT 日志的特殊处理
+
+**重要说明**：WFC（Wait For Completion）和 OUT（Output）日志具有最高优先级，**不可被丢弃**。
+
+#### 处理规则
+
+1. **队列满时的行为**：
+   - 当队列满且配置为 `DropNewest` 或 `DropOldest` 策略时
+   - 如果是 WFC 或 OUT 日志，系统将**自动切换为 Block 模式**
+   - 阻塞等待直到有可用空间，确保这些关键日志不会被丢弃
+
+2. **实现方式**：
+   ```cpp
+   // 伪代码示例
+   bool TryPush(const LogEntry& entry, bool isWFCorOUT) {
+       if (IsFull()) {
+           if (isWFCorOUT) {
+               // WFC/OUT 日志强制阻塞
+               WaitUntilSpaceAvailable();
+           } else {
+               // 普通日志按配置策略处理
+               ApplyQueueFullPolicy();
+           }
+       }
+       // 推送日志
+   }
+   ```
+
+3. **设计理由**：
+   - WFC 日志用于等待关键操作完成，丢失会导致逻辑错误
+   - OUT 日志用于记录必须保留的重要信息（如审计日志）
+   - 这两种日志的重要性高于性能考虑，值得付出阻塞的代价
 
 ### 错误码定义
 

@@ -192,6 +192,7 @@
 3. 当在 MProc 模式下调用 WFC 方法时，Logger 应等待 PipelineThread 和 WriterThread 都完成
 4. WFC 机制应使用槽位的 WFCState（None/Enabled/Completed）来检测完成状态
 5. 当 EnableWFC 模板参数为 false 时，Logger 应将 WFC 方法降级为普通日志调用，零开销
+6. **WFC 日志不可丢弃**：当队列满且配置为 DropNewest 或 DropOldest 策略时，WFC 日志应自动切换为 Block 模式，阻塞等待直到有可用空间，确保 WFC 日志不会被丢弃
 
 ### 需求 13: 进程名/模块名注册
 
@@ -324,17 +325,18 @@
 4. 子进程应能够使用与主进程相同的日志接口（全局函数和宏）
 5. 子进程的日志应通过 SharedRingBuffer 传输到主进程的 WriterThread
 
-### 需求 23: ALO (Always Log Output) 接口
+### 需求 23: OUT (Output) 接口
 
 **用户故事:** 作为开发者，我希望能够记录始终输出的日志，不受编译时级别限制，以便在关键场景下确保日志输出。
 
 #### 验收标准
 
-1. Logger 应提供 ALO 日志方法：AlertALO()、CriticalALO()、ErrorALO() 等
-2. oneplog 命名空间应提供全局 ALO 函数：oneplog::AlertALO()、oneplog::CriticalALO() 等
-3. 系统应提供 ALO 日志宏：ONEPLOG_ALERT_ALO、ONEPLOG_CRITICAL_ALO 等
-4. ALO 日志应绕过编译时级别检查，始终输出
-5. ALO 日志应绕过运行时级别检查，始终输出（不受任何级别限制）
+1. Logger 应提供 OUT 日志方法：AlertOUT()、FatalOUT()、ErrorOUT() 等
+2. oneplog 命名空间应提供全局 OUT 函数：oneplog::AlertOUT()、oneplog::FatalOUT() 等
+3. 系统应提供 OUT 日志宏：ONEPLOG_ALERT_OUT、ONEPLOG_FATAL_OUT 等
+4. OUT 日志应绕过编译时级别检查，始终输出
+5. OUT 日志应绕过运行时级别检查，始终输出（不受任何级别限制）
+6. **OUT 日志不可丢弃**：当队列满且配置为 DropNewest 或 DropOldest 策略时，OUT 日志应自动切换为 Block 模式，阻塞等待直到有可用空间，确保 OUT 日志不会被丢弃
 
 ### 需求 25: 默认 Logger 参数配置
 

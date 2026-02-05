@@ -293,6 +293,14 @@ constexpr Mode StringToMode(std::string_view name) noexcept {
  * 
  * Defines the behavior when the ring buffer queue is full.
  * 定义当环形缓冲区队列满时的行为。
+ * 
+ * @note IMPORTANT: WFC (Wait For Completion) and OUT (Output) logs
+ *       are NEVER dropped. When the queue is full and policy is DropNewest or
+ *       DropOldest, WFC/OUT logs will automatically switch to Block mode to
+ *       ensure they are not lost.
+ * @note 重要：WFC（等待完成）和 OUT（输出）日志永远不会被丢弃。
+ *       当队列满且策略为 DropNewest 或 DropOldest 时，WFC/OUT 日志将
+ *       自动切换为 Block 模式，确保不会丢失。
  */
 enum class QueueFullPolicy : uint8_t {
     /// Block: Block the producer until space is available
@@ -301,10 +309,14 @@ enum class QueueFullPolicy : uint8_t {
 
     /// DropNewest: Drop the newest log entry and increment dropped count
     /// 丢弃最新：丢弃新日志条目并增加丢弃计数
+    /// (WFC/OUT logs will force Block mode instead)
+    /// （WFC/OUT 日志将强制使用 Block 模式）
     DropNewest = 1,
 
     /// DropOldest: Drop the oldest log entry and increment dropped count
     /// 丢弃最旧：丢弃最旧日志条目并增加丢弃计数
+    /// (WFC/OUT logs will force Block mode instead)
+    /// （WFC/OUT 日志将强制使用 Block 模式）
     DropOldest = 2
 };
 
