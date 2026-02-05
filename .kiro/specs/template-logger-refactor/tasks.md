@@ -14,22 +14,22 @@
   - [x] 1.5 实现 ErrorCode 枚举
   - [x] 1.6 实现 LevelNameStyle 枚举和 LevelToString 函数
 
-- [ ] 2. 实现 BinarySnapshot 类
-  - [ ] 2.1 实现基本类型捕获方法（int32_t, int64_t, float, double, bool）
-  - [ ] 2.2 实现字符串捕获方法（StringView 零拷贝，StringCopy 内联拷贝）
-  - [ ] 2.3 实现变参模板 Capture 方法
-  - [ ] 2.4 实现序列化和反序列化方法
-  - [ ] 2.5 实现 Format 方法
-  - [ ] 2.6 实现 ConvertPointersToData 方法
-  - [ ] 2.7 编写 BinarySnapshot 单元测试
-  - [ ] 2.8 编写 BinarySnapshot 属性测试（Property 6, 7）
+- [x] 2. 实现 BinarySnapshot 类
+  - [x] 2.1 实现基本类型捕获方法（int32_t, int64_t, float, double, bool）
+  - [x] 2.2 实现字符串捕获方法（StringView 零拷贝，StringCopy 内联拷贝）
+  - [x] 2.3 实现变参模板 Capture 方法
+  - [x] 2.4 实现序列化和反序列化方法
+  - [x] 2.5 实现 Format 方法
+  - [x] 2.6 实现 ConvertPointersToData 方法
+  - [x] 2.7 编写 BinarySnapshot 单元测试
+  - [x] 2.8 编写 BinarySnapshot 属性测试（Property 6, 7）
 
-- [ ] 3. 实现 LogEntry 结构体
-  - [ ] 3.1 实现 SourceLocation 结构体
-  - [ ] 3.2 实现 LogEntryDebug 结构体
-  - [ ] 3.3 实现 LogEntryRelease 结构体
-  - [ ] 3.4 实现编译时选择（NDEBUG 宏）
-  - [ ] 3.5 编写 LogEntry 单元测试
+- [x] 3. 实现 LogEntry 结构体
+  - [x] 3.1 实现 SourceLocation 结构体
+  - [x] 3.2 实现 LogEntryDebug 结构体
+  - [x] 3.3 实现 LogEntryRelease 结构体
+  - [x] 3.4 实现编译时选择（NDEBUG 宏）
+  - [x] 3.5 编写 LogEntry 单元测试
 
 ### 阶段 2: 环形缓冲区
 

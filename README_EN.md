@@ -1,6 +1,6 @@
 # onePlog
 
-High-performance C++17 multi-process aggregated logging system
+High-performance C++20 multi-process aggregated logging system
 
 ## Features
 

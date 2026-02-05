@@ -4,6 +4,8 @@ cmake-build-*/
 .build/
 out/
 
+external/
+
 # IDE
 .idea/
 .vscode/
