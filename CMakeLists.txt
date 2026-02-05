@@ -74,6 +74,18 @@ if(ONEPLOG_BUILD_TESTS)
     # LogEntry layout test (standalone executable for manual verification)
     add_executable(log_entry_layout_test tests/log_entry_layout_test.cpp)
     target_include_directories(log_entry_layout_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+    # RingBuffer tests
+    add_executable(ring_buffer_test tests/ring_buffer_test.cpp)
+    target_link_libraries(ring_buffer_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(ring_buffer_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    gtest_discover_tests(ring_buffer_test)
+
+    # RingBuffer property tests
+    add_executable(ring_buffer_property_test tests/ring_buffer_property_test.cpp)
+    target_link_libraries(ring_buffer_property_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(ring_buffer_property_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    gtest_discover_tests(ring_buffer_property_test)
 endif()
 
 # Installation

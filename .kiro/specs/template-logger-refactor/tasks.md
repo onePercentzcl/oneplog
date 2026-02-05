@@ -33,15 +33,15 @@
 
 ### 阶段 2: 环形缓冲区
 
-- [ ] 4. 实现 RingBuffer 核心逻辑
-  - [ ] 4.1 实现 Slot 模板结构体（缓存行对齐）
-  - [ ] 4.2 实现 RingBufferHeader 结构体（冷热分离）
-  - [ ] 4.3 实现 RingBuffer 模板类
-  - [ ] 4.4 实现 AcquireSlot 和 CommitSlot 方法
-  - [ ] 4.5 实现 TryPush 和 TryPop 方法
-  - [ ] 4.6 实现队列满策略处理
-  - [ ] 4.7 编写 RingBuffer 单元测试
-  - [ ] 4.8 编写 RingBuffer 属性测试（Property 8, 9）
+- [x] 4. 实现 RingBuffer 核心逻辑
+  - [x] 4.1 实现 Slot 模板结构体（缓存行对齐）
+  - [x] 4.2 实现 RingBufferHeader 结构体（冷热分离）
+  - [x] 4.3 实现 RingBuffer 模板类
+  - [x] 4.4 实现 AcquireSlot 和 CommitSlot 方法
+  - [x] 4.5 实现 TryPush 和 TryPop 方法
+  - [x] 4.6 实现队列满策略处理
+  - [x] 4.7 编写 RingBuffer 单元测试
+  - [x] 4.8 编写 RingBuffer 属性测试（Property 8, 9）
 
 - [ ] 5. 实现 HeapRingBuffer
   - [ ] 5.1 基于 RingBuffer 实现 HeapRingBuffer
