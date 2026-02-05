@@ -1,0 +1,43 @@
+---
+# 基础风格
+BasedOnStyle: Google
+
+# 核心语言标准
+Language: Cpp
+Standard: c++17
+
+# --- 对齐与缩进设置 ---
+IndentWidth: 4                  # 缩进使用 4 个空格
+ColumnLimit: 140               # 单行限制 100 字符
+TabWidth: 4
+UseTab: Never                  # 永远使用空格代替 Tab
+
+# --- 注释对齐（你最关心的部分） ---
+AlignTrailingComments: true    # 开启行内注释对齐
+# 注释距离代码的最少空格数
+# 如果你想让注释离代码远一点，可以调大这个值
+SpacesBeforeTrailingComments: 4
+
+
+# --- 枚举与列表设置 ---
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+
+# --- 结构化对齐 ---
+AlignAfterOpenBracket: Align   # 圆括号左对齐
+AlignConsecutiveAssignments: true  # 连续赋值语句对齐（让 = 号对齐）
+AlignConsecutiveDeclarations: false # 变量声明通常不建议强制对齐，容易乱
+
+# --- 空格设置 ---
+SpaceAfterCStyleCast: true     # 强转后加空格 (int) x -> (int) x
+SpaceBeforeRangeBasedForLoopColon: true # for(auto& x : xs) 加空格
+
+# --- 换行设置 ---
+BreakBeforeBraces: Attach      # 大括号紧跟（K&R 风格）
+PointerAlignment: Left         # 指针靠左：int* p (符合现代 C++ 习惯)
+
+# --- 排序设置 ---
+SortIncludes: true             # 自动排序 #include
+IncludeBlocks: Regroup         # 自动对引用块进行分组排序
+...
