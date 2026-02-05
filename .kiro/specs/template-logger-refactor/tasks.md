@@ -6,13 +6,13 @@
 
 ### 阶段 1: 核心基础设施
 
-- [ ] 1. 实现基础类型和枚举
-  - [ ] 1.1 实现 Level 枚举（9 个级别：Alert 到 Off）
-  - [ ] 1.2 实现 Mode 枚举（Sync/Async/MProc）
-  - [ ] 1.3 实现 QueueFullPolicy 枚举（Block/DropNewest/DropOldest）
-  - [ ] 1.4 实现 SlotState 和 WFCState 枚举
-  - [ ] 1.5 实现 ErrorCode 枚举
-  - [ ] 1.6 实现 LevelNameStyle 枚举和 LevelToString 函数
+- [x] 1. 实现基础类型和枚举
+  - [x] 1.1 实现 Level 枚举（9 个级别：Alert 到 Off）
+  - [x] 1.2 实现 Mode 枚举（Sync/Async/MProc）
+  - [x] 1.3 实现 QueueFullPolicy 枚举（Block/DropNewest/DropOldest）
+  - [x] 1.4 实现 SlotState 和 WFCState 枚举
+  - [x] 1.5 实现 ErrorCode 枚举
+  - [x] 1.6 实现 LevelNameStyle 枚举和 LevelToString 函数
 
 - [ ] 2. 实现 BinarySnapshot 类
   - [ ] 2.1 实现基本类型捕获方法（int32_t, int64_t, float, double, bool）

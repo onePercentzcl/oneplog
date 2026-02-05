@@ -386,6 +386,203 @@ constexpr Mode StringToMode(std::string_view name) noexcept {
 }
 
 // ==============================================================================
+// Queue Full Policy / 队列满策略
+// ==============================================================================
+
+/**
+ * @brief Queue full policy enumeration
+ * @brief 队列满策略枚举
+ * 
+ * Defines the behavior when the ring buffer queue is full.
+ * 定义当环形缓冲区队列满时的行为。
+ */
+enum class QueueFullPolicy : uint8_t {
+    /// Block: Block the producer until space is available
+    /// 阻塞：阻塞生产者直到有可用空间
+    Block = 0,
+
+    /// DropNewest: Drop the newest log entry and increment dropped count
+    /// 丢弃最新：丢弃新日志条目并增加丢弃计数
+    DropNewest = 1,
+
+    /// DropOldest: Drop the oldest log entry and increment dropped count
+    /// 丢弃最旧：丢弃最旧日志条目并增加丢弃计数
+    DropOldest = 2
+};
+
+/**
+ * @brief Convert queue full policy to string representation
+ * @brief 将队列满策略转换为字符串表示
+ * @param policy The queue full policy / 队列满策略
+ * @return std::string_view The string representation of the policy / 策略的字符串表示
+ */
+constexpr std::string_view QueueFullPolicyToString(const QueueFullPolicy policy) noexcept {
+    switch (policy) {
+        case QueueFullPolicy::Block:
+            return "Block";
+        case QueueFullPolicy::DropNewest:
+            return "DropNewest";
+        case QueueFullPolicy::DropOldest:
+            return "DropOldest";
+        default:
+            return "Unknown";
+    }
+}
+
+/**
+ * @brief Convert string to queue full policy
+ * @brief 将字符串转换为队列满策略
+ * @param name The string representation of the policy / 策略的字符串表示
+ * @return QueueFullPolicy The corresponding queue full policy / 对应的队列满策略
+ */
+constexpr QueueFullPolicy StringToQueueFullPolicy(std::string_view name) noexcept {
+    if (name == "block" || name == "Block" || name == "BLOCK") {
+        return QueueFullPolicy::Block;
+    }
+    if (name == "dropnewest" || name == "DropNewest" || name == "DROPNEWEST" ||
+        name == "drop_newest" || name == "DROP_NEWEST") {
+        return QueueFullPolicy::DropNewest;
+    }
+    if (name == "dropoldest" || name == "DropOldest" || name == "DROPOLDEST" ||
+        name == "drop_oldest" || name == "DROP_OLDEST") {
+        return QueueFullPolicy::DropOldest;
+    }
+    return QueueFullPolicy::DropNewest; // Default policy
+}
+
+// ==============================================================================
+// Slot State / 槽位状态
+// ==============================================================================
+
+/**
+ * @brief Slot state enumeration for ring buffer
+ * @brief 环形缓冲区槽位状态枚举
+ * 
+ * Defines the state of each slot in the ring buffer for lock-free operations.
+ * 定义环形缓冲区中每个槽位的状态，用于无锁操作。
+ */
+enum class SlotState : uint8_t {
+    /// Empty: Slot is available for writing
+    /// 空闲：槽位可用于写入
+    Empty = 0,
+
+    /// Writing: Slot is being written by a producer
+    /// 写入中：槽位正在被生产者写入
+    Writing = 1,
+
+    /// Ready: Slot contains data ready for reading
+    /// 就绪：槽位包含可供读取的数据
+    Ready = 2,
+
+    /// Reading: Slot is being read by a consumer
+    /// 读取中：槽位正在被消费者读取
+    Reading = 3
+};
+
+/**
+ * @brief Convert slot state to string representation
+ * @brief 将槽位状态转换为字符串表示
+ * @param state The slot state / 槽位状态
+ * @return std::string_view The string representation of the state / 状态的字符串表示
+ */
+constexpr std::string_view SlotStateToString(const SlotState state) noexcept {
+    switch (state) {
+        case SlotState::Empty:
+            return "Empty";
+        case SlotState::Writing:
+            return "Writing";
+        case SlotState::Ready:
+            return "Ready";
+        case SlotState::Reading:
+            return "Reading";
+        default:
+            return "Unknown";
+    }
+}
+
+// ==============================================================================
+// WFC State / WFC 状态
+// ==============================================================================
+
+/**
+ * @brief WFC (Wait For Completion) state enumeration
+ * @brief WFC（等待完成）状态枚举
+ * 
+ * Defines the state of WFC mechanism for each log entry.
+ * 定义每个日志条目的 WFC 机制状态。
+ */
+enum class WFCState : uint8_t {
+    /// None: WFC is not enabled for this entry
+    /// 无：此条目未启用 WFC
+    None = 0,
+
+    /// Enabled: WFC is enabled, waiting for completion
+    /// 启用：WFC 已启用，等待完成
+    Enabled = 1,
+
+    /// Completed: WFC operation has completed
+    /// 完成：WFC 操作已完成
+    Completed = 2
+};
+
+/**
+ * @brief Convert WFC state to string representation
+ * @brief 将 WFC 状态转换为字符串表示
+ * @param state The WFC state / WFC 状态
+ * @return std::string_view The string representation of the state / 状态的字符串表示
+ */
+constexpr std::string_view WFCStateToString(const WFCState state) noexcept {
+    switch (state) {
+        case WFCState::None:
+            return "None";
+        case WFCState::Enabled:
+            return "Enabled";
+        case WFCState::Completed:
+            return "Completed";
+        default:
+            return "Unknown";
+    }
+}
+
+// ==============================================================================
+// Consumer State / 消费者状态
+// ==============================================================================
+
+/**
+ * @brief Consumer state enumeration for writer/pipeline threads
+ * @brief 输出/管道线程的消费者状态枚举
+ * 
+ * Defines the state of consumer threads for polling and backoff strategy.
+ * 定义消费者线程的状态，用于轮询和回避策略。
+ */
+enum class ConsumerState : uint8_t {
+    /// Active: Consumer is actively processing entries
+    /// 活跃：消费者正在积极处理条目
+    Active = 0,
+
+    /// Waiting: Consumer is waiting for notification
+    /// 等待：消费者正在等待通知
+    Waiting = 1
+};
+
+/**
+ * @brief Convert consumer state to string representation
+ * @brief 将消费者状态转换为字符串表示
+ * @param state The consumer state / 消费者状态
+ * @return std::string_view The string representation of the state / 状态的字符串表示
+ */
+constexpr std::string_view ConsumerStateToString(const ConsumerState state) noexcept {
+    switch (state) {
+        case ConsumerState::Active:
+            return "Active";
+        case ConsumerState::Waiting:
+            return "Waiting";
+        default:
+            return "Unknown";
+    }
+}
+
+// ==============================================================================
 // Error Code / 错误码
 // ==============================================================================
 
