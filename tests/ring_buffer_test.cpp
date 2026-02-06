@@ -54,7 +54,8 @@ TEST(QueueFullPolicyTest, EnumValues) {
 TEST(SlotTest, DefaultConstructor) {
     Slot<512> slot;
     EXPECT_EQ(slot.GetState(), SlotState::Empty);
-    EXPECT_EQ(slot.GetWFC(), WFCState::None);
+    // Note: WFC state removed from Slot in new implementation
+    // 注意：新实现中 WFC 状态已从 Slot 移除
 }
 
 TEST(SlotTest, StateOperations) {
@@ -90,20 +91,6 @@ TEST(SlotTest, CompareExchangeState) {
     EXPECT_EQ(expected, SlotState::Writing);  // Expected updated to actual value
 }
 
-TEST(SlotTest, WFCOperations) {
-    Slot<512> slot;
-    
-    // Test SetWFC and GetWFC
-    slot.SetWFC(WFCState::Enabled);
-    EXPECT_EQ(slot.GetWFC(), WFCState::Enabled);
-    
-    slot.SetWFC(WFCState::Completed);
-    EXPECT_EQ(slot.GetWFC(), WFCState::Completed);
-    
-    slot.SetWFC(WFCState::None);
-    EXPECT_EQ(slot.GetWFC(), WFCState::None);
-}
-
 TEST(SlotTest, WriteAndReadData) {
     Slot<512> slot;
     
@@ -114,7 +101,8 @@ TEST(SlotTest, WriteAndReadData) {
     
     // Read data
     char buffer[100];
-    EXPECT_TRUE(slot.ReadData(buffer, dataSize));
+    size_t readSize = dataSize;
+    EXPECT_TRUE(slot.ReadData(buffer, readSize));
     EXPECT_STREQ(buffer, testData);
 }
 
@@ -129,9 +117,10 @@ TEST(SlotTest, WriteDataTooLarge) {
 TEST(SlotTest, DataSizeConstant) {
     Slot<512> slot;
     
-    // DataSize should be SlotSize minus overhead
-    size_t expectedSize = 512 - sizeof(std::atomic<SlotState>) 
-                              - sizeof(std::atomic<WFCState>) - 6;
+    // DataSize should be SlotSize minus header overhead
+    // Header: atomic<SlotState>(1) + uint16_t(2) + reserved[6](6) = 9 bytes, but aligned
+    // New implementation: kHeaderSize = sizeof(atomic<SlotState>) + sizeof(uint16_t) + 6
+    size_t expectedSize = 512 - Slot<512>::kHeaderSize;
     EXPECT_EQ(slot.DataSize(), expectedSize);
     EXPECT_EQ(Slot<512>::DataSize(), expectedSize);
 }
@@ -182,10 +171,13 @@ TEST(RingBufferHeaderTest, TailOperations) {
     RingBufferHeader header;
     header.Init(1024);
     
-    header.SetTail(20);
+    // New API: use FetchAddTail instead of SetTail
+    // 新 API：使用 FetchAddTail 代替 SetTail
+    size_t oldTail = header.FetchAddTail(20);
+    EXPECT_EQ(oldTail, 0);
     EXPECT_EQ(header.GetTail(), 20);
     
-    size_t oldTail = header.FetchAddTail(5);
+    oldTail = header.FetchAddTail(5);
     EXPECT_EQ(oldTail, 20);
     EXPECT_EQ(header.GetTail(), 25);
 }
@@ -209,12 +201,39 @@ TEST(RingBufferHeaderTest, DroppedCountOperations) {
     
     EXPECT_EQ(header.GetDroppedCount(), 0);
     
-    uint64_t oldCount = header.FetchAddDroppedCount(1);
-    EXPECT_EQ(oldCount, 0);
+    // New API: use IncrementDroppedCount instead of FetchAddDroppedCount
+    // 新 API：使用 IncrementDroppedCount 代替 FetchAddDroppedCount
+    header.IncrementDroppedCount();
     EXPECT_EQ(header.GetDroppedCount(), 1);
     
-    header.FetchAddDroppedCount(5);
-    EXPECT_EQ(header.GetDroppedCount(), 6);
+    header.IncrementDroppedCount();
+    header.IncrementDroppedCount();
+    header.IncrementDroppedCount();
+    header.IncrementDroppedCount();
+    EXPECT_EQ(header.GetDroppedCount(), 5);
+}
+
+TEST(RingBufferHeaderTest, ProcessedTailOperations) {
+    RingBufferHeader header;
+    header.Init(1024);
+    
+    EXPECT_EQ(header.GetProcessedTail(), 0);
+    
+    header.SetProcessedTail(10);
+    EXPECT_EQ(header.GetProcessedTail(), 10);
+    
+    header.SetProcessedTail(100);
+    EXPECT_EQ(header.GetProcessedTail(), 100);
+}
+
+TEST(RingBufferHeaderTest, CachedHeadOperations) {
+    RingBufferHeader header;
+    header.Init(1024);
+    
+    EXPECT_EQ(header.GetCachedHead(), 0);
+    
+    header.SetCachedHead(50);
+    EXPECT_EQ(header.GetCachedHead(), 50);
 }
 
 TEST(RingBufferHeaderTest, IsEmpty) {
@@ -223,7 +242,7 @@ TEST(RingBufferHeaderTest, IsEmpty) {
     
     EXPECT_TRUE(header.IsEmpty());
     
-    header.SetTail(10);
+    header.FetchAddTail(10);
     EXPECT_FALSE(header.IsEmpty());
     
     header.SetHead(10);
@@ -236,7 +255,7 @@ TEST(RingBufferHeaderTest, IsFull) {
     
     EXPECT_FALSE(header.IsFull());
     
-    header.SetTail(1024);
+    header.FetchAddTail(1024);
     EXPECT_TRUE(header.IsFull());
     
     header.SetHead(1);
@@ -249,7 +268,7 @@ TEST(RingBufferHeaderTest, Size) {
     
     EXPECT_EQ(header.Size(), 0);
     
-    header.SetTail(10);
+    header.FetchAddTail(10);
     EXPECT_EQ(header.Size(), 10);
     
     header.SetHead(5);
@@ -261,26 +280,26 @@ TEST(RingBufferHeaderTest, Size) {
 // ==============================================================================
 
 TEST(RingBufferTest, DefaultConstructor) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;  // slotCount must be power of 2
     
     // Should not be initialized yet
-    EXPECT_EQ(buffer.Capacity(), 16);
+    EXPECT_EQ(buffer.Capacity(), 64);
 }
 
 TEST(RingBufferTest, Init) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init(QueueFullPolicy::DropNewest);
     
     EXPECT_TRUE(buffer.IsEmpty());
     EXPECT_FALSE(buffer.IsFull());
     EXPECT_EQ(buffer.Size(), 0);
-    EXPECT_EQ(buffer.Capacity(), 16);
+    EXPECT_EQ(buffer.Capacity(), 64);
     EXPECT_EQ(buffer.GetDroppedCount(), 0);
     EXPECT_EQ(buffer.GetFullPolicy(), QueueFullPolicy::DropNewest);
 }
 
 TEST(RingBufferTest, TryPushAndTryPop) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Push data
@@ -303,7 +322,7 @@ TEST(RingBufferTest, TryPushAndTryPop) {
 }
 
 TEST(RingBufferTest, TryPopEmpty) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Try to pop from empty buffer
@@ -313,7 +332,7 @@ TEST(RingBufferTest, TryPopEmpty) {
 }
 
 TEST(RingBufferTest, MultiplePushPop) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Push multiple items
@@ -342,11 +361,11 @@ TEST(RingBufferTest, MultiplePushPop) {
 // ==============================================================================
 
 TEST(RingBufferTest, DropNewestPolicy) {
-    RingBuffer<512, 4> buffer;  // Small buffer
+    RingBuffer<512, 64> buffer;
     buffer.Init(QueueFullPolicy::DropNewest);
     
     // Fill the buffer
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 64; ++i) {
         std::string data = "Message " + std::to_string(i);
         EXPECT_TRUE(buffer.TryPush(data.c_str(), data.size() + 1));
     }
@@ -355,12 +374,12 @@ TEST(RingBufferTest, DropNewestPolicy) {
     EXPECT_EQ(buffer.GetDroppedCount(), 0);
     
     // Try to push when full - should drop newest
-    std::string newData = "Message 4";
+    std::string newData = "Message 64";
     EXPECT_FALSE(buffer.TryPush(newData.c_str(), newData.size() + 1));
     EXPECT_EQ(buffer.GetDroppedCount(), 1);
     
     // Verify old messages are still there
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 64; ++i) {
         char readBuffer[100];
         size_t readSize = sizeof(readBuffer);
         EXPECT_TRUE(buffer.TryPop(readBuffer, readSize));
@@ -371,11 +390,11 @@ TEST(RingBufferTest, DropNewestPolicy) {
 }
 
 TEST(RingBufferTest, BlockPolicy) {
-    RingBuffer<512, 4> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init(QueueFullPolicy::Block);
     
     // Fill the buffer
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 64; ++i) {
         std::string data = "Message " + std::to_string(i);
         EXPECT_TRUE(buffer.TryPush(data.c_str(), data.size() + 1));
     }
@@ -385,7 +404,7 @@ TEST(RingBufferTest, BlockPolicy) {
     // Try to push when full in a separate thread
     std::atomic<bool> pushCompleted{false};
     std::thread producer([&]() {
-        std::string data = "Message 4";
+        std::string data = "Message 64";
         buffer.TryPush(data.c_str(), data.size() + 1);
         pushCompleted = true;
     });
@@ -404,33 +423,35 @@ TEST(RingBufferTest, BlockPolicy) {
     EXPECT_TRUE(pushCompleted);
     
     // Verify the new message was pushed
-    EXPECT_EQ(buffer.Size(), 4);
+    EXPECT_EQ(buffer.Size(), 64);
 }
 
 // ==============================================================================
-// WFC Tests / WFC 测试
+// WFC Tests (New Architecture) / WFC 测试（新架构）
 // ==============================================================================
 
-TEST(RingBufferTest, TryPushWFC) {
-    RingBuffer<512, 16> buffer;
+TEST(RingBufferTest, TryPushExReturnsSlotIndex) {
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
-    // Push with WFC
+    // Push with TryPushEx returns slot index
     const char* testData = "WFC message";
     size_t dataSize = strlen(testData) + 1;
-    EXPECT_TRUE(buffer.TryPushWFC(testData, dataSize));
+    int64_t slotIndex = buffer.TryPushEx(testData, dataSize);
     
+    EXPECT_GE(slotIndex, 0);
     EXPECT_EQ(buffer.Size(), 1);
 }
 
-TEST(RingBufferTest, WaitForCompletion) {
-    RingBuffer<512, 16> buffer;
+TEST(RingBufferTest, WaitForCompletionWithConsumer) {
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
-    // Push with WFC
+    // Push with TryPushEx
     const char* testData = "WFC message";
     size_t dataSize = strlen(testData) + 1;
-    EXPECT_TRUE(buffer.TryPushWFC(testData, dataSize));
+    int64_t slotIndex = buffer.TryPushEx(testData, dataSize);
+    EXPECT_GE(slotIndex, 0);
     
     // Start consumer thread
     std::thread consumer([&]() {
@@ -440,25 +461,79 @@ TEST(RingBufferTest, WaitForCompletion) {
         buffer.TryPop(readBuffer, readSize);
     });
     
-    // Wait for completion (should succeed)
-    int64_t slotIndex = 0;  // First slot
-    EXPECT_TRUE(buffer.WaitForCompletion(slotIndex, std::chrono::milliseconds(200)));
+    // Wait for completion (should succeed after consumer processes)
+    EXPECT_TRUE(buffer.WaitForCompletion(slotIndex, std::chrono::milliseconds(500)));
     
     consumer.join();
 }
 
 TEST(RingBufferTest, WaitForCompletionTimeout) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
-    // Push with WFC but don't consume
+    // Push but don't consume
     const char* testData = "WFC message";
     size_t dataSize = strlen(testData) + 1;
-    EXPECT_TRUE(buffer.TryPushWFC(testData, dataSize));
+    int64_t slotIndex = buffer.TryPushEx(testData, dataSize);
+    EXPECT_GE(slotIndex, 0);
     
-    // Wait for completion (should timeout)
-    int64_t slotIndex = 0;
+    // Wait for completion (should timeout since no consumer)
     EXPECT_FALSE(buffer.WaitForCompletion(slotIndex, std::chrono::milliseconds(50)));
+}
+
+TEST(RingBufferTest, FlushWaitsForAllMessages) {
+    RingBuffer<512, 64> buffer;
+    buffer.Init();
+    
+    // Push multiple messages
+    for (int i = 0; i < 5; ++i) {
+        std::string data = "Message " + std::to_string(i);
+        buffer.TryPush(data.c_str(), data.size() + 1);
+    }
+    
+    // Start consumer thread
+    std::thread consumer([&]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        for (int i = 0; i < 5; ++i) {
+            char readBuffer[100];
+            size_t readSize = sizeof(readBuffer);
+            buffer.TryPop(readBuffer, readSize);
+        }
+    });
+    
+    // Flush should wait for all messages to be processed
+    EXPECT_TRUE(buffer.Flush(std::chrono::milliseconds(500)));
+    
+    consumer.join();
+}
+
+TEST(RingBufferTest, ProcessedTailUpdatedOnPop) {
+    RingBuffer<512, 64> buffer;
+    buffer.Init();
+    
+    // Initial processed tail should be 0 (no slots processed yet)
+    // 初始 processedTail 应为 0（还没有处理任何槽位）
+    EXPECT_EQ(buffer.GetProcessedTail(), 0);
+    
+    // Push and pop
+    const char* testData = "Test";
+    buffer.TryPush(testData, 5);
+    
+    char readBuffer[100];
+    size_t readSize = sizeof(readBuffer);
+    buffer.TryPop(readBuffer, readSize);
+    
+    // Processed tail should be 1 (slot 0 processed, next to process is 1)
+    // processedTail 应为 1（槽位 0 已处理，下一个待处理是 1）
+    EXPECT_EQ(buffer.GetProcessedTail(), 1);
+    
+    // Push and pop again
+    buffer.TryPush(testData, 5);
+    readSize = sizeof(readBuffer);
+    buffer.TryPop(readBuffer, readSize);
+    
+    // Processed tail should be 2
+    EXPECT_EQ(buffer.GetProcessedTail(), 2);
 }
 
 // ==============================================================================
@@ -466,14 +541,14 @@ TEST(RingBufferTest, WaitForCompletionTimeout) {
 // ==============================================================================
 
 TEST(RingBufferTest, PushNullData) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     EXPECT_FALSE(buffer.TryPush(nullptr, 10));
 }
 
 TEST(RingBufferTest, PushZeroSize) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     const char* data = "test";
@@ -481,7 +556,7 @@ TEST(RingBufferTest, PushZeroSize) {
 }
 
 TEST(RingBufferTest, PushTooLarge) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     std::vector<uint8_t> largeData(buffer.kMaxDataSize + 1, 0xFF);
@@ -489,7 +564,7 @@ TEST(RingBufferTest, PushTooLarge) {
 }
 
 TEST(RingBufferTest, PopNullBuffer) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Push data first
@@ -502,7 +577,7 @@ TEST(RingBufferTest, PopNullBuffer) {
 }
 
 TEST(RingBufferTest, PopZeroSize) {
-    RingBuffer<512, 16> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Push data first
@@ -516,19 +591,19 @@ TEST(RingBufferTest, PopZeroSize) {
 }
 
 TEST(RingBufferTest, WrapAround) {
-    RingBuffer<512, 4> buffer;
+    RingBuffer<512, 64> buffer;
     buffer.Init();
     
     // Fill and empty multiple times to test wrap-around
     for (int cycle = 0; cycle < 3; ++cycle) {
         // Fill
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 64; ++i) {
             std::string data = "Cycle " + std::to_string(cycle) + " Message " + std::to_string(i);
             EXPECT_TRUE(buffer.TryPush(data.c_str(), data.size() + 1));
         }
         
         // Empty
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 64; ++i) {
             char readBuffer[100];
             size_t readSize = sizeof(readBuffer);
             EXPECT_TRUE(buffer.TryPop(readBuffer, readSize));
@@ -622,3 +697,31 @@ TEST(RingBufferTest, PushPopPerformance) {
     // Should be very fast (< 1 microsecond per operation on modern hardware)
     EXPECT_LT(avgTime, 10.0);
 }
+
+// ==============================================================================
+// IsPowerOf2 Tests / IsPowerOf2 测试
+// ==============================================================================
+
+TEST(UtilityTest, IsPowerOf2) {
+    EXPECT_TRUE(IsPowerOf2(1));
+    EXPECT_TRUE(IsPowerOf2(2));
+    EXPECT_TRUE(IsPowerOf2(4));
+    EXPECT_TRUE(IsPowerOf2(8));
+    EXPECT_TRUE(IsPowerOf2(16));
+    EXPECT_TRUE(IsPowerOf2(32));
+    EXPECT_TRUE(IsPowerOf2(64));
+    EXPECT_TRUE(IsPowerOf2(128));
+    EXPECT_TRUE(IsPowerOf2(256));
+    EXPECT_TRUE(IsPowerOf2(512));
+    EXPECT_TRUE(IsPowerOf2(1024));
+    
+    EXPECT_FALSE(IsPowerOf2(0));
+    EXPECT_FALSE(IsPowerOf2(3));
+    EXPECT_FALSE(IsPowerOf2(5));
+    EXPECT_FALSE(IsPowerOf2(6));
+    EXPECT_FALSE(IsPowerOf2(7));
+    EXPECT_FALSE(IsPowerOf2(9));
+    EXPECT_FALSE(IsPowerOf2(100));
+    EXPECT_FALSE(IsPowerOf2(1000));
+}
+

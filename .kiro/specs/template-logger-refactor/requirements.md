@@ -111,12 +111,15 @@
 #### 验收标准
 
 1. HeapRingBuffer 应实现 MPSC（多生产者单消费者）无锁队列
-2. HeapRingBuffer 应使用缓存行对齐的原子变量以防止伪共享
+2. HeapRingBuffer 应使用缓存行对齐的原子变量以防止伪共享，头部应分为 5 个缓存行：m_head、m_cachedHead、m_tail、m_processedTail、其他低竞争数据
 3. HeapRingBuffer 应支持基于槽位的操作：AcquireSlot、CommitSlot
-4. HeapRingBuffer 应支持 WFC 操作：TryPushWFC、MarkWFCComplete、WaitForCompletion
+4. HeapRingBuffer 应支持 WFC 操作：TryPushEx（返回 slotIndex）、WaitForCompletion（自旋等待 m_processedTail > slotIndex）、Flush
 5. 对于所有推送操作，HeapRingBuffer 应为来自同一生产者的元素保持 FIFO 顺序
 6. HeapRingBuffer 应使用 4 种槽位状态：Empty、Writing、Ready、Reading
-7. HeapRingBuffer 应使用 3 种 WFC 状态：None、Enabled、Completed
+7. HeapRingBuffer 的 slotCount 必须是 2 的幂，使用位运算（& kIndexMask）代替取模运算
+8. HeapRingBuffer 应使用影子头指针（m_cachedHead）减少生产者对消费者 m_head 的读取竞争
+9. HeapRingBuffer 应使用 CPU pause 指令（x86: _mm_pause, ARM: yield）优化自旋等待
+10. HeapRingBuffer 应使用预取指令（__builtin_prefetch）提前加载槽位数据到 L1 Cache
 
 ### 需求 8: SharedRingBuffer 共享内存队列
 
@@ -190,9 +193,11 @@
 1. 当在 Sync 模式下调用 WFC 方法时，Logger 应与普通日志行为相同（原生支持）
 2. 当在 Async 模式下调用 WFC 方法时，Logger 应等待 WriterThread 完成输出
 3. 当在 MProc 模式下调用 WFC 方法时，Logger 应等待 PipelineThread 和 WriterThread 都完成
-4. WFC 机制应使用槽位的 WFCState（None/Enabled/Completed）来检测完成状态
+4. WFC 机制应使用全局 `m_processedTail` 原子变量追踪消费者处理进度，生产者通过 `WaitForCompletion(slotIndex)` 自旋等待 `m_processedTail > slotIndex`
 5. 当 EnableWFC 模板参数为 false 时，Logger 应将 WFC 方法降级为普通日志调用，零开销
 6. **WFC 日志不可丢弃**：当队列满且配置为 DropNewest 或 DropOldest 策略时，WFC 日志应自动切换为 Block 模式，阻塞等待直到有可用空间，确保 WFC 日志不会被丢弃
+7. RingBuffer 应提供 `TryPushEx()` 方法返回 slotIndex，供生产者用于后续的 `WaitForCompletion()` 调用
+8. RingBuffer 应提供 `Flush()` 方法等待所有待处理消息被消费者处理完成
 
 ### 需求 13: 进程名/模块名注册
 

@@ -43,17 +43,18 @@
   - [x] 4.7 编写 RingBuffer 单元测试
   - [x] 4.8 编写 RingBuffer 属性测试（Property 8, 9）
 
-- [ ] 5. 实现 HeapRingBuffer
-  - [ ] 5.1 基于 RingBuffer 实现 HeapRingBuffer
-  - [ ] 5.2 实现堆内存分配和管理
-  - [ ] 5.3 编写 HeapRingBuffer 单元测试
+- [x] 5. 实现 HeapRingBuffer
+  - [x] 5.1 基于 RingBuffer 实现 HeapRingBuffer
+  - [x] 5.2 实现堆内存分配和管理
+  - [x] 5.3 编写 HeapRingBuffer 单元测试
 
-- [ ] 6. 实现 WFC 支持
-  - [ ] 6.1 实现 TryPushWFC 方法
-  - [ ] 6.2 实现 MarkWFCComplete 方法
-  - [ ] 6.3 实现 WaitForCompletion 方法
-  - [ ] 6.4 编写 WFC 单元测试
-  - [ ] 6.5 编写 WFC 属性测试（Property 19）
+- [x] 6. 实现 WFC 支持（新架构：基于 m_processedTail）
+  - [x] 6.1 实现 TryPushEx 方法（返回 slotIndex）
+  - [x] 6.2 实现 WaitForCompletion 方法（自旋等待 m_processedTail > slotIndex）
+  - [x] 6.3 实现 Flush 方法（等待所有待处理消息）
+  - [x] 6.4 消费者 TryPop 后自动更新 m_processedTail
+  - [x] 6.5 编写 WFC 单元测试
+  - [x] 6.6 编写 WFC 属性测试（Property 19）
 
 ### 阶段 3: 格式化和输出
 
@@ -128,11 +129,11 @@
   - [ ] 15.3 实现 Create 和 Connect 方法
   - [ ] 15.4 编写 SharedMemory 单元测试
 
-- [ ] 16. 实现 SharedRingBuffer
-  - [ ] 16.1 基于 RingBuffer 实现 SharedRingBuffer
-  - [ ] 16.2 实现共享内存布局计算
-  - [ ] 16.3 编写 SharedRingBuffer 单元测试
-  - [ ] 16.4 编写 SharedRingBuffer 属性测试（Property 10, 18）
+- [x] 16. 实现 SharedRingBuffer
+  - [x] 16.1 基于 RingBuffer 实现 SharedRingBuffer
+  - [x] 16.2 实现共享内存布局计算
+  - [x] 16.3 编写 SharedRingBuffer 单元测试
+  - [x] 16.4 编写 SharedRingBuffer 属性测试（Property 10, 18）
 
 ### 阶段 7: Logger 模板类
 

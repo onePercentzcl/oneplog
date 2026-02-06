@@ -86,6 +86,56 @@ if(ONEPLOG_BUILD_TESTS)
     target_link_libraries(ring_buffer_property_test PRIVATE GTest::gtest GTest::gtest_main)
     target_include_directories(ring_buffer_property_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
     gtest_discover_tests(ring_buffer_property_test)
+
+    # RingBuffer performance tests
+    add_executable(ring_buffer_performance_test tests/ring_buffer_performance_test.cpp)
+    target_link_libraries(ring_buffer_performance_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(ring_buffer_performance_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    gtest_discover_tests(ring_buffer_performance_test)
+
+    # HeapRingBuffer tests
+    add_executable(heap_ring_buffer_test tests/heap_ring_buffer_test.cpp)
+    target_link_libraries(heap_ring_buffer_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(heap_ring_buffer_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    gtest_discover_tests(heap_ring_buffer_test)
+
+    # WFC property tests
+    add_executable(wfc_property_test tests/wfc_property_test.cpp)
+    target_link_libraries(wfc_property_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(wfc_property_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    gtest_discover_tests(wfc_property_test)
+
+    # SharedRingBuffer tests
+    # SharedRingBuffer 测试
+    add_executable(shared_ring_buffer_test tests/shared_ring_buffer_test.cpp)
+    target_link_libraries(shared_ring_buffer_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(shared_ring_buffer_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    # Link rt library on Linux for shm_open
+    # 在 Linux 上链接 rt 库以支持 shm_open
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(shared_ring_buffer_test PRIVATE rt)
+    endif()
+    gtest_discover_tests(shared_ring_buffer_test)
+
+    # SharedRingBuffer property tests
+    # SharedRingBuffer 属性测试
+    add_executable(shared_ring_buffer_property_test tests/shared_ring_buffer_property_test.cpp)
+    target_link_libraries(shared_ring_buffer_property_test PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(shared_ring_buffer_property_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(shared_ring_buffer_property_test PRIVATE rt)
+    endif()
+    gtest_discover_tests(shared_ring_buffer_property_test)
+
+    # Slot count benchmark (standalone executable)
+    # 槽位数量基准测试（独立可执行文件）
+    add_executable(slot_count_benchmark tests/slot_count_benchmark.cpp)
+    target_include_directories(slot_count_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+    # Producer delay benchmark (standalone executable)
+    # 生产者延时基准测试（独立可执行文件）
+    add_executable(producer_delay_benchmark tests/producer_delay_benchmark.cpp)
+    target_include_directories(producer_delay_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/include)
 endif()
 
 # Installation

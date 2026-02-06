@@ -14,411 +14,192 @@
 #include <chrono>
 #include <thread>
 
+// Platform-specific CPU pause/yield intrinsics
+// 平台特定的 CPU 暂停/让步指令
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #include <immintrin.h>
+    #define CPU_PAUSE() _mm_pause()
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    #define CPU_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+#elif defined(__arm__) || defined(_M_ARM)
+    #define CPU_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+#else
+    #define CPU_PAUSE() std::this_thread::yield()
+#endif
+
+// Prefetch intrinsics
+// 预取指令
+#if defined(__GNUC__) || defined(__clang__)
+    #define PREFETCH_READ(addr) __builtin_prefetch((addr), 0, 3)
+    #define PREFETCH_WRITE(addr) __builtin_prefetch((addr), 1, 3)
+#elif defined(_MSC_VER)
+    #include <intrin.h>
+    #define PREFETCH_READ(addr) _mm_prefetch((const char*)(addr), _MM_HINT_T0)
+    #define PREFETCH_WRITE(addr) _mm_prefetch((const char*)(addr), _MM_HINT_T0)
+#else
+    #define PREFETCH_READ(addr) ((void)0)
+    #define PREFETCH_WRITE(addr) ((void)0)
+#endif
+
 namespace oneplog::internal {
 
-// Use definitions from common.hpp
-// 使用 common.hpp 中的定义
 using oneplog::internal::kCacheLineSize;
 using oneplog::internal::SlotState;
-using oneplog::internal::WFCState;
 using oneplog::internal::QueueFullPolicy;
 using oneplog::internal::ConsumerState;
 
 /**
+ * @brief Check if a number is a power of 2.
+ * @brief 检查一个数是否是 2 的幂。
+ */
+constexpr bool IsPowerOf2(size_t n) noexcept {
+    return n > 0 && (n & (n - 1)) == 0;
+}
+
+/**
  * @brief A single data slot in the ring buffer.
  * @brief 环形缓冲区中的单个数据槽。
- * @tparam slotSize The TOTAL size of the slot in bytes (including control flags and padding).
- * 槽位的**总大小**（字节），包含控制标志位和填充。
+ * 
+ * Memory Layout (aligned to 8 bytes for m_item):
+ * - m_state:    1 byte  (offset 0)
+ * - m_padding1: 1 byte  (offset 1, padding for m_dataSize alignment)
+ * - m_dataSize: 2 bytes (offset 2)
+ * - m_padding2: 4 bytes (offset 4, padding to align m_item to 8 bytes)
+ * - m_item:     rest    (offset 8)
+ * 
+ * 内存布局（m_item 对齐到 8 字节）：
+ * - m_state:    1 字节  (偏移 0)
+ * - m_padding1: 1 字节  (偏移 1，为 m_dataSize 对齐填充)
+ * - m_dataSize: 2 字节  (偏移 2)
+ * - m_padding2: 4 字节  (偏移 4，为 m_item 对齐到 8 字节填充)
+ * - m_item:     剩余    (偏移 8)
+ * 
+ * @note WFC state removed from Slot - now using global m_processedTail for flush.
+ * @note WFC 状态已从 Slot 移除 - 现在使用全局 m_processedTail 实现 flush。
  */
 template <size_t slotSize>
 struct alignas(kCacheLineSize) Slot {
-    // Sanity checks / 合理性检查
     static_assert(slotSize % kCacheLineSize == 0,
-        "SlotSize must be a multiple of kCacheLineSize to ensure strict alignment without implicit padding.");
-    // SlotSize 必须是 kCacheLineSize 的倍数，以确保严格对齐且无隐式填充。
+        "SlotSize must be a multiple of kCacheLineSize.");
 
-    // We remove internal alignment to pack data tightly.
-    // 我们移除内部对齐以紧凑存储数据。
-    static constexpr size_t kHeaderSize = sizeof(std::atomic<SlotState>) + sizeof(std::atomic<WFCState>) + sizeof(uint16_t) + 4;
-
+    // Header size: 8 bytes (aligned for efficient m_item access)
+    // 头部大小：8 字节（为高效访问 m_item 对齐）
+    static constexpr size_t kHeaderSize = 8;
     static_assert(slotSize > kHeaderSize, "SlotSize is too small!");
 
-    /**
-     * @brief Slot state (Atomic).
-     * @brief 槽位状态（原子操作）。
-     * @note Packed tightly. Accessed by the same thread owning the slot.
-     * @note 紧凑排列。由拥有该槽位的同一个线程访问。
-     */
-    std::atomic<SlotState> m_state{SlotState::Empty};
+    std::atomic<SlotState> m_state{SlotState::Empty};  // 1 byte at offset 0
+    uint8_t m_padding1{0};                              // 1 byte at offset 1
+    uint16_t m_dataSize{0};                             // 2 bytes at offset 2
+    uint8_t m_padding2[4]{};                            // 4 bytes at offset 4
+    alignas(8) char m_item[slotSize - kHeaderSize];     // rest at offset 8
 
-    /**
-     * @brief WFC state (Atomic).
-     * @brief WFC 状态（原子操作）。
-     */
-    std::atomic<WFCState> m_wfc{WFCState::None};
-
-    /**
-     * @brief Actual data size stored in this slot.
-     * @brief 此槽位中存储的实际数据大小。
-     */
-    uint16_t m_dataSize{0};
-
-    /**
-     * @brief Reserved bytes for alignment.
-     * @brief 保留字节用于对齐。
-     */
-    uint8_t m_reserved[4]{};
-
-    /**
-     * @brief Actual data buffer.
-     * @brief 实际数据缓冲区。
-     * @details Fills the remaining space.
-     * 填充剩余空间。
-     */
-    char m_item[slotSize - kHeaderSize];
-
-    // ========== State Operations / 状态操作 ==========
-
-    /**
-     * @brief Get current slot state.
-     * @brief 获取当前槽位状态。
-     */
     SlotState GetState() const noexcept {
         return m_state.load(std::memory_order_acquire);
     }
 
-    /**
-     * @brief Set slot state.
-     * @brief 设置槽位状态。
-     */
     void SetState(SlotState state) noexcept {
         m_state.store(state, std::memory_order_release);
     }
 
-    /**
-     * @brief Compare and exchange slot state.
-     * @brief 比较并交换槽位状态。
-     * @param expected Expected state / 期望状态
-     * @param desired Desired state / 目标状态
-     * @return true if successful / 如果成功则返回 true
-     */
     bool CompareExchangeState(SlotState& expected, SlotState desired) noexcept {
         return m_state.compare_exchange_strong(expected, desired,
                                                std::memory_order_acq_rel,
                                                std::memory_order_acquire);
     }
 
-    // ========== WFC Operations / WFC 操作 ==========
-
-    /**
-     * @brief Get current WFC state.
-     * @brief 获取当前 WFC 状态。
-     */
-    WFCState GetWFC() const noexcept {
-        return m_wfc.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Set WFC state.
-     * @brief 设置 WFC 状态。
-     */
-    void SetWFC(WFCState state) noexcept {
-        m_wfc.store(state, std::memory_order_release);
-    }
-
-    // ========== Data Operations / 数据操作 ==========
-
-    /**
-     * @brief Write data to slot.
-     * @brief 向槽位写入数据。
-     * @param data Data pointer / 数据指针
-     * @param size Data size / 数据大小
-     * @return true if successful / 如果成功则返回 true
-     */
     bool WriteData(const void* data, size_t size) noexcept {
-        if (!data || size == 0 || size > DataSize()) {
-            return false;
-        }
+        if (!data || size == 0 || size > DataSize()) return false;
         m_dataSize = static_cast<uint16_t>(size);
         std::memcpy(m_item, data, size);
         return true;
     }
 
-    /**
-     * @brief Read data from slot.
-     * @brief 从槽位读取数据。
-     * @param buffer Output buffer / 输出缓冲区
-     * @param size Buffer size (in/out) - input: buffer size, output: actual data size
-     *             缓冲区大小（输入/输出）- 输入：缓冲区大小，输出：实际数据大小
-     * @return true if successful / 如果成功则返回 true
-     */
     bool ReadData(void* buffer, size_t& size) const noexcept {
-        if (!buffer || size == 0) {
-            return false;
-        }
-        // Return the actual data size stored
-        // 返回存储的实际数据大小
+        if (!buffer || size == 0) return false;
         size_t actualSize = m_dataSize;
-        if (actualSize > size) {
-            return false;  // Buffer too small
-        }
+        if (actualSize > size) return false;
         std::memcpy(buffer, m_item, actualSize);
         size = actualSize;
         return true;
     }
 
-    /**
-     * @brief Get data pointer.
-     * @brief 获取数据指针。
-     */
-    const char* Data() const noexcept {
-        return m_item;
-    }
-
-    /**
-     * @brief Get data pointer (mutable).
-     * @brief 获取数据指针（可变）。
-     */
-    char* Data() noexcept {
-        return m_item;
-    }
-
-    /**
-     * @brief Get maximum data size.
-     * @brief 获取最大数据大小。
-     */
-    static constexpr size_t DataSize() noexcept {
-        return slotSize - kHeaderSize;
-    }
+    const char* Data() const noexcept { return m_item; }
+    char* Data() noexcept { return m_item; }
+    static constexpr size_t DataSize() noexcept { return slotSize - kHeaderSize; }
 };
+
 
 /**
  * @brief Header containing control variables for the RingBuffer.
  * @brief 包含 RingBuffer 控制变量的头部。
- * @details Implements "Hot/Cold Splitting" to separate Producer-owned and Consumer-owned variables.
- * @details 实现了"冷热分离"，将生产者拥有和消费者拥有的变量物理隔离。
  * 
- * Memory Layout (3 cache lines):
- * 内存布局（3 个缓存行）：
- * 
+ * Memory Layout (5 cache lines):
  * Cache Line 0: [m_head] - Consumer write hot
- *               消费者写热点
+ * Cache Line 1: [m_cachedHead] - Consumer occasional write, producer read
+ * Cache Line 2: [m_tail] - Producer write hot
+ * Cache Line 3: [m_processedTail] - Consumer write, producer read for WFC
+ * Cache Line 4: [m_consumerState, m_droppedCount, ...] - Less contended
  * 
- * Cache Line 1: [m_cachedHead, m_tail] - Producer read/write hot
- *               生产者读写热点（m_cachedHead 作为缓冲区隔离 head 和 tail）
- * 
- * Cache Line 2: [m_consumerState, m_droppedCount, ...] - Less contended
- *               低竞争数据
+ * 内存布局（5 个缓存行）：
+ * 缓存行 0: [m_head] - 消费者写热点
+ * 缓存行 1: [m_cachedHead] - 消费者偶尔写，生产者读
+ * 缓存行 2: [m_tail] - 生产者写热点
+ * 缓存行 3: [m_processedTail] - 消费者写，生产者读（用于 WFC）
+ * 缓存行 4: [m_consumerState, m_droppedCount, ...] - 低竞争
  */
 struct alignas(kCacheLineSize) RingBufferHeader {
-    // === Cache Line 0: Consumer Owned (Write Hot) / 消费者拥有（写热点） ===
-
-    /**
-     * @brief Head index (Consumer read/write).
-     * @brief 头指针（消费者读/写）。
-     */
+    // Cache Line 0: Consumer write hot
     alignas(kCacheLineSize) std::atomic<size_t> m_head{0};
-
-    // === Cache Line 1: Producer Owned (Read/Write Hot) / 生产者拥有（读写热点） ===
     
-    /**
-     * @brief Shadow head for producer-side optimization.
-     * @brief 生产者侧优化的影子头指针。
-     * @details This is a cached copy of head that producers use to avoid
-     *          frequent reads of the actual head. It's always <= actual head,
-     *          providing a conservative estimate of queue fullness.
-     *          Placed between m_head and m_tail to act as a buffer zone,
-     *          reducing false sharing between consumer and producer hot variables.
-     * @details 这是生产者用来避免频繁读取实际 head 的缓存副本。
-     *          它总是 <= 实际 head，提供队列满状态的保守估计。
-     *          放置在 m_head 和 m_tail 之间作为缓冲区，
-     *          减少消费者和生产者热点变量之间的伪共享。
-     */
+    // Cache Line 1: Shadow head for producer optimization
     alignas(kCacheLineSize) std::atomic<size_t> m_cachedHead{0};
     
-    /**
-     * @brief Tail index (Producer read/write).
-     * @brief 尾指针（生产者读/写）。
-     * @note In the same cache line as m_cachedHead for producer locality.
-     * @note 与 m_cachedHead 在同一缓存行以提高生产者局部性。
-     */
-    std::atomic<size_t> m_tail{0};
-
-    // === Cache Line 2: Less Contended / 低竞争数据 ===
+    // Cache Line 2: Producer write hot
+    alignas(kCacheLineSize) std::atomic<size_t> m_tail{0};
     
-    /**
-     * @brief Consumer active state.
-     * @brief 消费者活跃状态。
-     */
+    // Cache Line 3: Processed tail for WFC (consumer write, producer read)
+    // 已处理的尾指针，用于 WFC（消费者写，生产者读）
+    alignas(kCacheLineSize) std::atomic<size_t> m_processedTail{0};
+    
+    // Cache Line 4: Less contended data
     alignas(kCacheLineSize) std::atomic<ConsumerState> m_consumerState{ConsumerState::Active};
+    std::atomic<uint64_t> m_droppedCount{0};
+    size_t m_capacity{0};
+    QueueFullPolicy m_fullPolicy{QueueFullPolicy::DropNewest};
 
-    // === Cold / Less Contended Data / 冷数据或低竞争数据 ===
-
-    std::atomic<uint64_t> m_droppedCount{0}; ///< Counter for dropped logs / 丢包计数器
-
-    size_t m_capacity{0};                                 ///< Buffer capacity / 缓冲区容量
-    QueueFullPolicy m_fullPolicy{QueueFullPolicy::DropNewest}; ///< Full policy / 满策略
-
-    // Padding ensures the data section starts at a new cache line boundary.
-    // 填充确保数据区从新的缓存行边界开始。
-    char m_padding[kCacheLineSize - sizeof(std::atomic<uint64_t>) - sizeof(size_t) - sizeof(QueueFullPolicy)];
-
-    // ========== Initialization / 初始化 ==========
-
-    /**
-     * @brief Initialize the header.
-     * @brief 初始化头部。
-     * @param capacity Buffer capacity / 缓冲区容量
-     * @param policy Queue full policy / 队列满策略
-     */
     void Init(size_t capacity, QueueFullPolicy policy = QueueFullPolicy::DropNewest) noexcept {
         m_head.store(0, std::memory_order_relaxed);
         m_tail.store(0, std::memory_order_relaxed);
         m_cachedHead.store(0, std::memory_order_relaxed);
+        m_processedTail.store(0, std::memory_order_relaxed);
         m_consumerState.store(ConsumerState::Active, std::memory_order_relaxed);
         m_droppedCount.store(0, std::memory_order_relaxed);
         m_capacity = capacity;
         m_fullPolicy = policy;
     }
 
-    // ========== Head Operations / 头指针操作 ==========
-
-    /**
-     * @brief Get head index.
-     * @brief 获取头指针。
-     */
-    size_t GetHead() const noexcept {
-        return m_head.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Set head index.
-     * @brief 设置头指针。
-     */
-    void SetHead(size_t value) noexcept {
-        m_head.store(value, std::memory_order_release);
-    }
-
-    // ========== Tail Operations / 尾指针操作 ==========
-
-    /**
-     * @brief Get tail index.
-     * @brief 获取尾指针。
-     */
-    size_t GetTail() const noexcept {
-        return m_tail.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Set tail index.
-     * @brief 设置尾指针。
-     */
-    void SetTail(size_t value) noexcept {
-        m_tail.store(value, std::memory_order_release);
-    }
-
-    /**
-     * @brief Atomically increment tail and return old value.
-     * @brief 原子递增尾指针并返回旧值。
-     */
-    size_t FetchAddTail(size_t delta) noexcept {
-        return m_tail.fetch_add(delta, std::memory_order_acq_rel);
-    }
-
-    // ========== Cached Head Operations / 缓存头指针操作 ==========
-
-    /**
-     * @brief Get cached head index.
-     * @brief 获取缓存的头指针。
-     */
-    size_t GetCachedHead() const noexcept {
-        return m_cachedHead.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Set cached head index.
-     * @brief 设置缓存的头指针。
-     */
-    void SetCachedHead(size_t value) noexcept {
-        m_cachedHead.store(value, std::memory_order_release);
-    }
-
-    // ========== Consumer State Operations / 消费者状态操作 ==========
-
-    /**
-     * @brief Get consumer state.
-     * @brief 获取消费者状态。
-     */
-    ConsumerState GetConsumerState() const noexcept {
-        return m_consumerState.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Set consumer state.
-     * @brief 设置消费者状态。
-     */
-    void SetConsumerState(ConsumerState state) noexcept {
-        m_consumerState.store(state, std::memory_order_release);
-    }
-
-    // ========== Dropped Count Operations / 丢弃计数操作 ==========
-
-    /**
-     * @brief Get dropped count.
-     * @brief 获取丢弃计数。
-     */
-    uint64_t GetDroppedCount() const noexcept {
-        return m_droppedCount.load(std::memory_order_acquire);
-    }
-
-    /**
-     * @brief Atomically increment dropped count and return old value.
-     * @brief 原子递增丢弃计数并返回旧值。
-     */
-    uint64_t FetchAddDroppedCount(uint64_t delta) noexcept {
-        return m_droppedCount.fetch_add(delta, std::memory_order_acq_rel);
-    }
-
-    // ========== Configuration Queries / 配置查询 ==========
-
-    /**
-     * @brief Get buffer capacity.
-     * @brief 获取缓冲区容量。
-     */
-    size_t GetCapacity() const noexcept {
-        return m_capacity;
-    }
-
-    /**
-     * @brief Get queue full policy.
-     * @brief 获取队列满策略。
-     */
-    QueueFullPolicy GetFullPolicy() const noexcept {
-        return m_fullPolicy;
-    }
-
-    // ========== State Queries / 状态查询 ==========
-
-    /**
-     * @brief Check if buffer is empty.
-     * @brief 检查缓冲区是否为空。
-     */
-    bool IsEmpty() const noexcept {
-        return GetHead() == GetTail();
-    }
-
-    /**
-     * @brief Check if buffer is full.
-     * @brief 检查缓冲区是否已满。
-     */
-    bool IsFull() const noexcept {
-        return Size() >= m_capacity;
-    }
-
-    /**
-     * @brief Get current size.
-     * @brief 获取当前大小。
-     */
+    size_t GetHead() const noexcept { return m_head.load(std::memory_order_acquire); }
+    void SetHead(size_t value) noexcept { m_head.store(value, std::memory_order_release); }
+    size_t GetTail() const noexcept { return m_tail.load(std::memory_order_acquire); }
+    size_t FetchAddTail(size_t delta) noexcept { return m_tail.fetch_add(delta, std::memory_order_acq_rel); }
+    size_t GetCachedHead() const noexcept { return m_cachedHead.load(std::memory_order_acquire); }
+    void SetCachedHead(size_t value) noexcept { m_cachedHead.store(value, std::memory_order_release); }
+    
+    // Processed tail for WFC
+    size_t GetProcessedTail() const noexcept { return m_processedTail.load(std::memory_order_acquire); }
+    void SetProcessedTail(size_t value) noexcept { m_processedTail.store(value, std::memory_order_release); }
+    
+    ConsumerState GetConsumerState() const noexcept { return m_consumerState.load(std::memory_order_acquire); }
+    void SetConsumerState(ConsumerState state) noexcept { m_consumerState.store(state, std::memory_order_release); }
+    
+    // Relaxed for statistics
+    uint64_t GetDroppedCount() const noexcept { return m_droppedCount.load(std::memory_order_relaxed); }
+    void IncrementDroppedCount() noexcept { m_droppedCount.fetch_add(1, std::memory_order_relaxed); }
+    
+    size_t GetCapacity() const noexcept { return m_capacity; }
+    QueueFullPolicy GetFullPolicy() const noexcept { return m_fullPolicy; }
+    bool IsEmpty() const noexcept { return GetHead() == GetTail(); }
+    bool IsFull() const noexcept { return Size() >= m_capacity; }
     size_t Size() const noexcept {
         size_t tail = GetTail();
         size_t head = GetHead();
@@ -426,413 +207,313 @@ struct alignas(kCacheLineSize) RingBufferHeader {
     }
 };
 
+
 /**
  * @brief The Ring Buffer Class.
  * @brief 环形缓冲区类。
  * @tparam slotSize Size of each slot in bytes / 每个槽位的大小（字节）
- * @tparam slotCount Number of slots (should be power of 2) / 槽位数量（应为2的幂）
+ * @tparam slotCount Number of slots (MUST be power of 2) / 槽位数量（必须是2的幂）
+ * 
+ * WFC Architecture:
+ * - Producer calls TryPush() and records the returned slotIndex
+ * - Consumer calls TryPop() and updates m_processedTail after each pop
+ * - Producer calls WaitForCompletion(slotIndex) which spins on m_processedTail >= slotIndex
+ * - Slot is immediately released, no blocking on slot state
+ * 
+ * WFC 架构：
+ * - 生产者调用 TryPush() 并记录返回的 slotIndex
+ * - 消费者调用 TryPop() 并在每次 pop 后更新 m_processedTail
+ * - 生产者调用 WaitForCompletion(slotIndex) 自旋等待 m_processedTail >= slotIndex
+ * - Slot 立即释放，不阻塞在槽位状态上
  */
 template <size_t slotSize = 512, size_t slotCount = 1024>
 class alignas(kCacheLineSize) RingBuffer {
+    static_assert(IsPowerOf2(slotCount), "slotCount MUST be a power of 2.");
+    
 public:
     static constexpr size_t kMaxDataSize = Slot<slotSize>::DataSize();
-    
-    /**
-     * @brief Batch update interval for cached head.
-     * @brief 缓存头指针的批量更新间隔。
-     * @details Consumer updates cached head every kCachedHeadUpdateInterval pops.
-     * @details 消费者每 kCachedHeadUpdateInterval 次弹出更新一次缓存头指针。
-     */
     static constexpr size_t kCachedHeadUpdateInterval = 32;
+    static constexpr size_t kIndexMask = slotCount - 1;
 
-    /**
-     * @brief Initialize the ring buffer.
-     * @brief 初始化环形缓冲区。
-     * @param policy Queue full policy / 队列满策略
-     */
+private:
+    struct ProducerLocalState {
+        size_t localCachedHead{0};
+    };
+    
+    static ProducerLocalState& GetProducerLocalState() noexcept {
+        thread_local ProducerLocalState state;
+        return state;
+    }
+
+public:
     void Init(QueueFullPolicy policy = QueueFullPolicy::DropNewest) noexcept {
         m_header.Init(slotCount, policy);
-        
-        // Initialize all slots to Empty state
-        // 初始化所有槽位为空闲状态
         for (size_t i = 0; i < slotCount; ++i) {
             m_slots[i].SetState(SlotState::Empty);
-            m_slots[i].SetWFC(WFCState::None);
         }
     }
 
-    // ========== Producer Operations / 生产者操作 ==========
-
     /**
-     * @brief Acquire a slot for writing.
-     * @brief 获取一个槽位用于写入。
-     * @return Slot index, or -1 if failed / 槽位索引，失败返回 -1
+     * @brief Acquire a slot for writing using compare-then-claim strategy.
+     * @brief 使用先对比再抢占策略获取一个槽位用于写入。
+     * 
+     * Strategy: Compare first, then CAS to claim the index.
+     * This avoids wasting indices when the queue is full.
+     * 
+     * 策略：先对比，再用 CAS 抢占索引。
+     * 这避免了队列满时浪费索引。
+     * 
+     * @return Slot index (use for WaitForCompletion), or -1 if failed
+     * @return 槽位索引（用于 WaitForCompletion），失败返回 -1
      */
     int64_t AcquireSlot() noexcept {
-        // For DropNewest/DropOldest policies, use shadow head optimization
-        // 对于 DropNewest/DropOldest 策略，使用影子头指针优化
-        if (m_header.GetFullPolicy() != QueueFullPolicy::Block) {
-            // Step 1: Read current tail (will be incremented soon)
-            // 步骤 1：读取当前 tail（即将递增）
-            size_t currentTail = m_header.GetTail();
+        auto& localState = GetProducerLocalState();
+        
+        while (true) {
+            // Step 1: Read current tail (relaxed is OK, we'll verify with CAS)
+            // 步骤 1：读取当前尾指针（relaxed 即可，CAS 会验证）
+            size_t currentTail = m_header.m_tail.load(std::memory_order_relaxed);
             
-            // Step 2: Read cached head (conservative estimate, same cache line as tail)
-            // 步骤 2：读取缓存的 head（保守估计，与 tail 在同一缓存行）
-            size_t cachedHead = m_header.GetCachedHead();
+            // Step 2: Check if queue is full
+            // 步骤 2：检查队列是否已满
+            size_t headToUse;
+            if (m_header.GetFullPolicy() == QueueFullPolicy::Block) {
+                // Block mode: read actual head for accurate check
+                // 阻塞模式：读取真实头指针以获得准确检查
+                headToUse = m_header.GetHead();
+            } else {
+                // Non-block mode: use cached head for performance
+                // 非阻塞模式：使用缓存头指针以提高性能
+                headToUse = localState.localCachedHead;
+            }
             
-            // Step 3: Calculate estimated size
-            // 步骤 3：计算估算大小
-            size_t estimatedSize = currentTail - cachedHead;
+            size_t estimatedSize = (currentTail + 1) - headToUse;
             
-            // Step 4: If estimated size suggests queue might be full, refresh cached head
-            // 步骤 4：如果估算大小表明队列可能满了，刷新缓存的 head
-            if (estimatedSize >= slotCount) {
-                // Read actual head and update cached head
-                // 读取实际 head 并更新缓存的 head
-                size_t actualHead = m_header.GetHead();
-                m_header.SetCachedHead(actualHead);
-                
-                // Recalculate size with actual head
-                // 使用实际 head 重新计算大小
-                size_t actualSize = currentTail - actualHead;
-                
-                if (actualSize >= slotCount) {
-                    // Queue is truly full, drop this message
-                    // 队列确实满了，丢弃此消息
-                    m_header.FetchAddDroppedCount(1);
-                    return -1;
+            if (estimatedSize > slotCount) {
+                if (m_header.GetFullPolicy() != QueueFullPolicy::Block) {
+                    // Update local cached head from global cached head
+                    // 从全局缓存头指针更新本地缓存
+                    size_t cachedHead = m_header.GetCachedHead();
+                    
+                    if (cachedHead != localState.localCachedHead) {
+                        localState.localCachedHead = cachedHead;
+                        estimatedSize = (currentTail + 1) - cachedHead;
+                    }
+                    
+                    // Still full after update
+                    // 更新后仍然满
+                    if (estimatedSize > slotCount) {
+                        // Drop mode: increment dropped count and return
+                        // 丢弃模式：增加丢弃计数并返回
+                        m_header.IncrementDroppedCount();
+                        return -1;
+                    }
+                } else {
+                    // Block mode: spin and retry
+                    // 阻塞模式：自旋重试
+                    CPU_PAUSE();
+                    continue;
                 }
             }
-            // If we reach here, queue is not full (based on cached or actual head)
-            // 如果到达这里，队列未满（基于缓存或实际 head）
-        }
-        
-        // Atomically increment tail to reserve a slot
-        // 原子递增尾指针以预留槽位
-        size_t slotIndex = m_header.FetchAddTail(1);
-        size_t index = slotIndex % slotCount;
-        
-        // Wait for slot to become Empty
-        // 等待槽位变为空闲状态
-        auto& slot = m_slots[index];
-        SlotState expected = SlotState::Empty;
-        
-        // Try to transition Empty -> Writing
-        // 尝试转换 Empty -> Writing
-        int retries = 0;
-        constexpr int kMaxRetries = 10000;
-        
-        while (!slot.CompareExchangeState(expected, SlotState::Writing)) {
-            if (expected != SlotState::Empty) {
-                // Slot is busy - this shouldn't happen often if our size check worked
-                // 槽位忙 - 如果我们的大小检查有效，这种情况不应该经常发生
-                
-                // For Block policy, keep waiting
-                // 对于 Block 策略，继续等待
+            
+            // Step 3: Try to claim the slot using CAS (compare-and-swap)
+            // 步骤 3：使用 CAS 尝试抢占槽位
+            size_t expectedTail = currentTail;
+            if (!m_header.m_tail.compare_exchange_weak(expectedTail, currentTail + 1,
+                                                        std::memory_order_acq_rel,
+                                                        std::memory_order_relaxed)) {
+                // CAS failed, another producer claimed it, retry
+                // CAS 失败，其他生产者抢占了，重试
+                CPU_PAUSE();
+                continue;
+            }
+            
+            // Step 4: Successfully claimed slot, now acquire the slot state
+            // 步骤 4：成功抢占槽位，现在获取槽位状态
+            size_t index = currentTail & kIndexMask;
+            auto& slot = m_slots[index];
+            
+            SlotState expected = SlotState::Empty;
+            int retries = 0;
+            constexpr int kMaxRetries = 10000;
+            
+            while (!slot.CompareExchangeState(expected, SlotState::Writing)) {
                 if (m_header.GetFullPolicy() == QueueFullPolicy::Block) {
-                    std::this_thread::yield();
+                    // Block mode: wait for slot to become empty
+                    // 阻塞模式：等待槽位变空
+                    CPU_PAUSE();
                     expected = SlotState::Empty;
                     continue;
                 }
                 
-                // For Drop policies, if we've waited too long, give up
-                // 对于 Drop 策略，如果等待太久，放弃
                 if (++retries > kMaxRetries) {
-                    // Failed to acquire slot, drop this message
-                    // 无法获取槽位，丢弃此消息
-                    m_header.FetchAddDroppedCount(1);
+                    // Timeout: slot still not empty (shouldn't happen normally)
+                    // 超时：槽位仍未空（正常情况下不应发生）
+                    m_header.IncrementDroppedCount();
                     return -1;
                 }
-                
-                // Spin wait
-                // 自旋等待
-                std::this_thread::yield();
+                CPU_PAUSE();
                 expected = SlotState::Empty;
             }
+            
+            return static_cast<int64_t>(currentTail);
         }
-        
-        return static_cast<int64_t>(slotIndex);
     }
 
-    /**
-     * @brief Commit a slot after writing.
-     * @brief 写入完成后提交槽位。
-     * @param slotIndex Slot index returned by AcquireSlot / AcquireSlot 返回的槽位索引
-     */
     void CommitSlot(int64_t slotIndex) noexcept {
         if (slotIndex < 0) return;
-        
-        size_t index = static_cast<size_t>(slotIndex) % slotCount;
-        auto& slot = m_slots[index];
-        
-        // Transition Writing -> Ready
-        // 转换 Writing -> Ready
-        slot.SetState(SlotState::Ready);
+        size_t index = static_cast<size_t>(slotIndex) & kIndexMask;
+        m_slots[index].SetState(SlotState::Ready);
     }
 
     /**
      * @brief Try to push data to the buffer.
      * @brief 尝试向缓冲区推送数据。
-     * @param data Data pointer / 数据指针
-     * @param size Data size / 数据大小
-     * @return true if successful / 如果成功则返回 true
+     * @return Slot index for WaitForCompletion, or -1 if failed
+     * @return 用于 WaitForCompletion 的槽位索引，失败返回 -1
      */
+    int64_t TryPushEx(const void* data, size_t size) noexcept {
+        if (!data || size == 0 || size > kMaxDataSize) return -1;
+        
+        int64_t slotIndex = AcquireSlot();
+        if (slotIndex < 0) return -1;
+        
+        size_t index = static_cast<size_t>(slotIndex) & kIndexMask;
+        auto& slot = m_slots[index];
+        
+        if (!slot.WriteData(data, size)) {
+            slot.SetState(SlotState::Empty);
+            return -1;
+        }
+        
+        CommitSlot(slotIndex);
+        return slotIndex;
+    }
+
     bool TryPush(const void* data, size_t size) noexcept {
-        if (!data || size == 0 || size > kMaxDataSize) {
-            return false;
-        }
-        
-        int64_t slotIndex = AcquireSlot();
-        if (slotIndex < 0) {
-            return false;
-        }
-        
-        size_t index = static_cast<size_t>(slotIndex) % slotCount;
-        auto& slot = m_slots[index];
-        
-        if (!slot.WriteData(data, size)) {
-            // Write failed, release slot
-            // 写入失败，释放槽位
-            slot.SetState(SlotState::Empty);
-            return false;
-        }
-        
-        CommitSlot(slotIndex);
-        return true;
+        return TryPushEx(data, size) >= 0;
     }
 
-    /**
-     * @brief Try to push data with WFC enabled.
-     * @brief 尝试推送带 WFC 标记的数据。
-     * @param data Data pointer / 数据指针
-     * @param size Data size / 数据大小
-     * @return true if successful / 如果成功则返回 true
-     */
-    bool TryPushWFC(const void* data, size_t size) noexcept {
-        if (!data || size == 0 || size > kMaxDataSize) {
-            return false;
-        }
-        
-        int64_t slotIndex = AcquireSlot();
-        if (slotIndex < 0) {
-            return false;
-        }
-        
-        size_t index = static_cast<size_t>(slotIndex) % slotCount;
-        auto& slot = m_slots[index];
-        
-        // Set WFC state
-        // 设置 WFC 状态
-        slot.SetWFC(WFCState::Enabled);
-        
-        if (!slot.WriteData(data, size)) {
-            slot.SetState(SlotState::Empty);
-            slot.SetWFC(WFCState::None);
-            return false;
-        }
-        
-        CommitSlot(slotIndex);
-        return true;
-    }
-
-    // ========== Consumer Operations / 消费者操作 ==========
 
     /**
      * @brief Try to pop data from the buffer.
      * @brief 尝试从缓冲区弹出数据。
-     * @param buffer Output buffer / 输出缓冲区
-     * @param size Buffer size (in/out) / 缓冲区大小（输入/输出）
-     * @return true if successful / 如果成功则返回 true
+     * 
+     * Updates m_processedTail after successful pop for WFC support.
+     * m_processedTail represents the next slot to be processed (i.e., one past the last processed).
+     * 成功 pop 后更新 m_processedTail 以支持 WFC。
+     * m_processedTail 表示下一个待处理的槽位（即最后处理的槽位 + 1）。
      */
     bool TryPop(void* buffer, size_t& size) noexcept {
-        if (!buffer || size == 0) {
-            return false;
-        }
+        if (!buffer || size == 0) return false;
         
         size_t head = m_header.GetHead();
-        size_t tail = m_header.GetTail();
+        size_t index = head & kIndexMask;
         
-        if (head >= tail) {
-            // Buffer is empty
-            // 缓冲区为空
-            return false;
-        }
+        PREFETCH_READ(&m_slots[index]);
         
-        size_t index = head % slotCount;
         auto& slot = m_slots[index];
         
-        // Check if slot is Ready
-        // 检查槽位是否就绪
         SlotState expected = SlotState::Ready;
         if (!slot.CompareExchangeState(expected, SlotState::Reading)) {
             return false;
         }
         
-        // Read data
-        // 读取数据
         if (!slot.ReadData(buffer, size)) {
             slot.SetState(SlotState::Ready);
             return false;
         }
         
-        // Mark WFC as completed if enabled (before clearing the slot)
-        // 如果启用了 WFC，标记为完成（在清除槽位之前）
-        if (slot.GetWFC() == WFCState::Enabled) {
-            slot.SetWFC(WFCState::Completed);
-            // Give WaitForCompletion a chance to see the Completed state
-            // 给 WaitForCompletion 一个机会看到完成状态
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        
-        // Transition Reading -> Empty
-        // 转换 Reading -> Empty
         slot.SetState(SlotState::Empty);
         
-        // Clear WFC state after a delay
-        // 延迟清除 WFC 状态
-        if (slot.GetWFC() == WFCState::Completed) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            slot.SetWFC(WFCState::None);
-        }
-        
-        // Advance head
-        // 推进头指针
         size_t newHead = head + 1;
         m_header.SetHead(newHead);
         
-        // Batch update cached head for producers (every kCachedHeadUpdateInterval pops)
-        // 为生产者批量更新缓存的 head（每 kCachedHeadUpdateInterval 次弹出）
-        // This reduces write contention on the cached head cache line
-        // 这减少了对缓存头指针缓存行的写入竞争
-        if ((newHead % kCachedHeadUpdateInterval) == 0) {
+        // Update processed tail for WFC: set to newHead (one past the processed slot)
+        // 更新已处理尾指针用于 WFC：设置为 newHead（已处理槽位 + 1）
+        m_header.SetProcessedTail(newHead);
+        
+        // Batch update cached head
+        if ((newHead & (kCachedHeadUpdateInterval - 1)) == 0) {
             m_header.SetCachedHead(newHead);
         }
         
         return true;
     }
 
-    // ========== WFC Operations / WFC 操作 ==========
-
     /**
-     * @brief Mark WFC as completed for a slot.
-     * @brief 标记槽位的 WFC 为完成状态。
-     * @param slotIndex Slot index / 槽位索引
-     */
-    void MarkWFCComplete(int64_t slotIndex) noexcept {
-        if (slotIndex < 0) return;
-        
-        size_t index = static_cast<size_t>(slotIndex) % slotCount;
-        m_slots[index].SetWFC(WFCState::Completed);
-    }
-
-    /**
-     * @brief Wait for WFC completion.
-     * @brief 等待 WFC 完成。
-     * @param slotIndex Slot index / 槽位索引
-     * @param timeout Timeout duration / 超时时间
-     * @return true if completed within timeout / 如果在超时时间内完成则返回 true
+     * @brief Wait for a specific slot to be processed by consumer.
+     * @brief 等待特定槽位被消费者处理。
+     * 
+     * @param slotIndex The slot index returned by TryPushEx / TryPushEx 返回的槽位索引
+     * @param timeout Maximum wait time / 最大等待时间
+     * @return true if processed within timeout / 如果在超时内处理完成返回 true
+     * 
+     * Architecture: Spins on m_processedTail > slotIndex.
+     * m_processedTail represents the next slot to be processed (one past the last processed).
+     * Slot is already released, no blocking on slot state.
+     * 
+     * 架构：自旋等待 m_processedTail > slotIndex。
+     * m_processedTail 表示下一个待处理的槽位（最后处理的槽位 + 1）。
+     * 槽位已释放，不阻塞在槽位状态上。
      */
     bool WaitForCompletion(int64_t slotIndex, std::chrono::milliseconds timeout) noexcept {
         if (slotIndex < 0) return false;
         
-        size_t index = static_cast<size_t>(slotIndex) % slotCount;
-        auto& slot = m_slots[index];
-        
         auto start = std::chrono::steady_clock::now();
-        
-        // Exponential backoff
-        // 指数回避
         int backoff = 1;
-        while (slot.GetWFC() != WFCState::Completed) {
-            auto now = std::chrono::steady_clock::now();
-            if (now - start >= timeout) {
-                return false;
+        
+        while (true) {
+            size_t processed = m_header.GetProcessedTail();
+            // Check if our slot has been processed
+            // processed > slotIndex means slot slotIndex has been consumed
+            // 检查我们的槽位是否已被处理
+            // processed > slotIndex 表示槽位 slotIndex 已被消费
+            if (processed > static_cast<size_t>(slotIndex)) {
+                return true;
             }
             
-            std::this_thread::sleep_for(std::chrono::microseconds(backoff));
-            backoff = std::min(backoff * 2, 1000);
+            auto now = std::chrono::steady_clock::now();
+            if (now - start >= timeout) return false;
+            
+            // Exponential backoff with CPU pause
+            for (int i = 0; i < backoff; ++i) {
+                CPU_PAUSE();
+            }
+            backoff = std::min(backoff * 2, 64);
+            
+            if (backoff >= 64) {
+                std::this_thread::yield();
+            }
         }
-        
-        return true;
-    }
-
-    // ========== State Queries / 状态查询 ==========
-
-    /**
-     * @brief Check if buffer is empty.
-     * @brief 检查缓冲区是否为空。
-     */
-    bool IsEmpty() const noexcept {
-        return m_header.IsEmpty();
     }
 
     /**
-     * @brief Check if buffer is full.
-     * @brief 检查缓冲区是否已满。
+     * @brief Flush: wait for all pending messages to be processed.
+     * @brief Flush：等待所有待处理消息被处理。
+     * 
+     * Waits until m_processedTail > (currentTail - 1), meaning all slots up to currentTail-1 are processed.
+     * 等待直到 m_processedTail > (currentTail - 1)，即所有到 currentTail-1 的槽位都已处理。
      */
-    bool IsFull() const noexcept {
-        return m_header.IsFull();
+    bool Flush(std::chrono::milliseconds timeout) noexcept {
+        size_t currentTail = m_header.GetTail();
+        if (currentTail == 0) return true;
+        return WaitForCompletion(static_cast<int64_t>(currentTail - 1), timeout);
     }
 
-    /**
-     * @brief Get current size.
-     * @brief 获取当前大小。
-     */
-    size_t Size() const noexcept {
-        return m_header.Size();
-    }
-
-    /**
-     * @brief Get buffer capacity.
-     * @brief 获取缓冲区容量。
-     */
-    size_t Capacity() const noexcept {
-        return slotCount;
-    }
-
-    /**
-     * @brief Get dropped count.
-     * @brief 获取丢弃计数。
-     */
-    uint64_t GetDroppedCount() const noexcept {
-        return m_header.GetDroppedCount();
-    }
-
-    /**
-     * @brief Get queue full policy.
-     * @brief 获取队列满策略。
-     */
-    QueueFullPolicy GetFullPolicy() const noexcept {
-        return m_header.GetFullPolicy();
-    }
-
-    /**
-     * @brief Get consumer state.
-     * @brief 获取消费者状态。
-     */
-    ConsumerState GetConsumerState() const noexcept {
-        return m_header.GetConsumerState();
-    }
-
-    /**
-     * @brief Set consumer state.
-     * @brief 设置消费者状态。
-     */
-    void SetConsumerState(ConsumerState state) noexcept {
-        m_header.SetConsumerState(state);
-    }
+    bool IsEmpty() const noexcept { return m_header.IsEmpty(); }
+    bool IsFull() const noexcept { return m_header.IsFull(); }
+    size_t Size() const noexcept { return m_header.Size(); }
+    size_t Capacity() const noexcept { return slotCount; }
+    uint64_t GetDroppedCount() const noexcept { return m_header.GetDroppedCount(); }
+    QueueFullPolicy GetFullPolicy() const noexcept { return m_header.GetFullPolicy(); }
+    ConsumerState GetConsumerState() const noexcept { return m_header.GetConsumerState(); }
+    void SetConsumerState(ConsumerState state) noexcept { m_header.SetConsumerState(state); }
+    size_t GetProcessedTail() const noexcept { return m_header.GetProcessedTail(); }
 
 private:
-    /**
-     * @brief Get slot by index.
-     * @brief 根据索引获取槽位。
-     */
-    Slot<slotSize>& GetSlot(size_t index) noexcept {
-        return m_slots[index % slotCount];
-    }
-
-    RingBufferHeader m_header{};       ///< Control header / 控制头部
-    Slot<slotSize> m_slots[slotCount]; ///< Data slots array / 数据槽位数组
+    RingBufferHeader m_header{};
+    Slot<slotSize> m_slots[slotCount];
 };
 
 } // namespace oneplog::internal

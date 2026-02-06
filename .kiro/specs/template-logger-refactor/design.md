@@ -512,6 +512,26 @@ struct LogEntryRelease {
 
 ### 9. RingBuffer（环形缓冲区）
 
+#### 9.1 WFC 架构设计
+
+**重要更新**：WFC（Wait For Completion）机制已从基于 Slot 的状态管理重构为基于全局 `m_processedTail` 的设计。
+
+**旧架构（已废弃）**：
+- 每个 Slot 包含 `WFCState` 原子变量
+- 生产者设置 `WFCState::Enabled`，消费者设置 `WFCState::Completed`
+- 问题：Slot 无法立即释放，直到 WFC 超时
+
+**新架构（当前实现）**：
+- 使用全局 `m_processedTail` 原子变量追踪消费者处理进度
+- 消费者每次 pop 后更新 `m_processedTail = newHead`（表示下一个待处理的槽位）
+- 生产者调用 `WaitForCompletion(slotIndex)` 自旋等待 `m_processedTail > slotIndex`
+- Slot 立即释放，不阻塞在槽位状态上
+
+**优势**：
+- 解耦 Slot 状态管理和 WFC 逻辑
+- Slot 可以立即被其他生产者重用
+- 减少缓存行竞争
+
 ```cpp
 namespace oneplog::internal {
 
@@ -523,7 +543,7 @@ enum class SlotState : uint8_t {
     Reading = 3  // 正在读取
 };
 
-// WFC 状态
+// WFC 状态（保留用于其他模块，RingBuffer 不再使用）
 enum class WFCState : uint8_t {
     None = 0,      // 无 WFC
     Enabled = 1,   // WFC 启用
@@ -543,21 +563,35 @@ enum class ConsumerState : uint8_t {
     Waiting  // 等待通知
 };
 
-// 槽位结构
+// 槽位结构（WFC 状态已移除）
 template <size_t slotSize>
 struct alignas(kCacheLineSize) Slot {
     static_assert(slotSize % kCacheLineSize == 0, 
         "SlotSize must be a multiple of kCacheLineSize");
     
+    static constexpr size_t kHeaderSize = sizeof(std::atomic<SlotState>) + sizeof(uint16_t) + 6;
+    
     std::atomic<SlotState> m_state{SlotState::Empty};
-    std::atomic<WFCState> m_wfc{WFCState::None};
-    char m_item[slotSize - sizeof(std::atomic<SlotState>) - sizeof(std::atomic<WFCState>)];
+    uint16_t m_dataSize{0};
+    uint8_t m_reserved[6]{};  // 对齐填充
+    char m_item[slotSize - kHeaderSize];
 };
 
-// RingBuffer 头部（冷热分离）
+// RingBuffer 头部（冷热分离，5 个缓存行）
 struct alignas(kCacheLineSize) RingBufferHeader {
-    alignas(kCacheLineSize) std::atomic<size_t> m_head{0};      // 消费者拥有
-    alignas(kCacheLineSize) std::atomic<size_t> m_tail{0};      // 生产者拥有
+    // 缓存行 0: 消费者写热点
+    alignas(kCacheLineSize) std::atomic<size_t> m_head{0};
+    
+    // 缓存行 1: 影子头指针（消费者偶尔写，生产者读）
+    alignas(kCacheLineSize) std::atomic<size_t> m_cachedHead{0};
+    
+    // 缓存行 2: 生产者写热点
+    alignas(kCacheLineSize) std::atomic<size_t> m_tail{0};
+    
+    // 缓存行 3: 已处理尾指针（消费者写，生产者读，用于 WFC）
+    alignas(kCacheLineSize) std::atomic<size_t> m_processedTail{0};
+    
+    // 缓存行 4: 低竞争数据
     alignas(kCacheLineSize) std::atomic<ConsumerState> m_consumerState{ConsumerState::Active};
     std::atomic<uint64_t> m_droppedCount{0};
     size_t m_capacity{0};
@@ -567,21 +601,26 @@ struct alignas(kCacheLineSize) RingBufferHeader {
 // RingBuffer 类
 template <size_t slotSize = 512, size_t slotCount = 1024>
 class alignas(kCacheLineSize) RingBuffer {
+    static_assert(IsPowerOf2(slotCount), "slotCount MUST be a power of 2");
+    
 public:
-    void Init();
+    static constexpr size_t kIndexMask = slotCount - 1;  // 位运算代替取模
+    
+    void Init(QueueFullPolicy policy = QueueFullPolicy::DropNewest);
     
     // 生产者操作
     int64_t AcquireSlot();
     void CommitSlot(int64_t slot);
     bool TryPush(const void* data, size_t size);
-    bool TryPushWFC(const void* data, size_t size);
+    int64_t TryPushEx(const void* data, size_t size);  // 返回 slotIndex 用于 WFC
     
     // 消费者操作
     bool TryPop(void* data, size_t& size);
     
-    // WFC 支持
-    void MarkWFCComplete(int64_t slot);
-    bool WaitForCompletion(int64_t slot, std::chrono::milliseconds timeout);
+    // WFC 支持（新架构）
+    bool WaitForCompletion(int64_t slotIndex, std::chrono::milliseconds timeout);
+    bool Flush(std::chrono::milliseconds timeout);
+    size_t GetProcessedTail() const;
     
     // 状态查询
     bool IsEmpty() const;
@@ -595,6 +634,40 @@ private:
 
 } // namespace oneplog::internal
 ```
+
+#### 9.2 WFC 使用示例
+
+```cpp
+// 生产者端
+int64_t slotIndex = buffer.TryPushEx(data, size);
+if (slotIndex >= 0) {
+    // 等待消费者处理完成
+    bool completed = buffer.WaitForCompletion(slotIndex, std::chrono::milliseconds(1000));
+    if (!completed) {
+        // 超时处理
+    }
+}
+
+// 消费者端（TryPop 内部自动更新 m_processedTail）
+char readBuffer[512];
+size_t readSize = sizeof(readBuffer);
+if (buffer.TryPop(readBuffer, readSize)) {
+    // 处理数据
+    // m_processedTail 已自动更新
+}
+
+// Flush：等待所有待处理消息
+buffer.Flush(std::chrono::milliseconds(5000));
+```
+
+#### 9.3 性能优化
+
+1. **位运算代替取模**：`slotCount` 必须是 2 的幂，使用 `& kIndexMask` 代替 `% slotCount`
+2. **影子头指针**：`m_cachedHead` 减少生产者对消费者 `m_head` 的读取竞争
+3. **线程本地缓存**：生产者使用 `thread_local` 缓存 `cachedHead`，减少原子读取
+4. **CPU pause 指令**：自旋等待时使用 `_mm_pause()`（x86）或 `yield`（ARM）
+5. **预取指令**：消费者 pop 时预取下一个槽位数据
+6. **relaxed 内存序**：统计数据（`m_droppedCount`）使用 `memory_order_relaxed`
 
 ### 10. Registry（进程/线程注册表）
 
@@ -1967,9 +2040,15 @@ JsonFileSink jsonSink(JsonFormat(), "/var/log/app.json");
 
 ### Property 19: WFC 完成保证
 
-*对于任意* WFC 日志请求，在 Sink 完成输出后，调用方应该能够检测到完成状态并返回。
+*对于任意* WFC 日志请求（通过 `TryPushEx` 获取 slotIndex），在消费者处理完该槽位后（`m_processedTail > slotIndex`），`WaitForCompletion(slotIndex)` 应该返回 true。
 
-**验证: 需求 12.2, 12.3, 12.4**
+**实现细节**：
+- 生产者调用 `TryPushEx()` 获取 slotIndex
+- 消费者每次 `TryPop()` 后更新 `m_processedTail = newHead`
+- 生产者调用 `WaitForCompletion(slotIndex)` 自旋等待 `m_processedTail > slotIndex`
+- Slot 立即释放，不阻塞在槽位状态上
+
+**验证: 需求 12.2, 12.3, 12.4, 12.7, 12.8**
 
 ### Property 20: MemoryPool 内存重用
 
