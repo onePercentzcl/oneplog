@@ -192,17 +192,35 @@ if has_config("examples") then
         add_deps("oneplog")
     target_end()
     
+    -- WFC overhead benchmark / WFC 开销基准测试
+    target("benchmark_wfc_overhead")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/benchmark_wfc_overhead.cpp")
+        add_deps("oneplog")
+    target_end()
+    
+    -- Name lookup benchmark / 名称查找基准测试
+    target("benchmark_name_lookup")
+        set_kind("binary")
+        set_default(false)
+        add_files("example/benchmark_name_lookup.cpp")
+        add_deps("oneplog")
+    target_end()
+    
     -- spdlog comparison benchmark / spdlog 对比测试
-    -- This target does NOT depend on oneplog to avoid fmt conflicts
-    -- 此目标不依赖 oneplog 以避免 fmt 冲突
+    -- This target uses header-only mode to avoid fmt conflicts with spdlog
+    -- 此目标使用仅头文件模式以避免与 spdlog 的 fmt 冲突
     target("benchmark_compare")
         set_kind("binary")
         set_default(false)
         add_files("example/benchmark_compare.cpp")
         add_includedirs("include")
-        -- Link oneplog sources directly
-        add_files("src/oneplog/instantiations.cpp")
-        -- Add fmt sources
+        -- Use header-only mode / 使用仅头文件模式
+        add_defines("ONEPLOG_HEADER_ONLY")
+        add_defines("ONEPLOG_USE_FMT")
+        -- Add fmt sources (still needed for fmt formatting)
+        -- 添加 fmt 源文件（仍需要用于 fmt 格式化）
         add_files("src/fmt/format.cc")
         add_files("src/fmt/os.cc")
         if is_plat("linux") then
@@ -213,7 +231,6 @@ if has_config("examples") then
         if has_package("spdlog") then
             add_packages("spdlog")
             add_defines("HAS_SPDLOG")
-            add_defines("ONEPLOG_USE_FMT")
         end
     target_end()
 end

@@ -113,6 +113,9 @@ example_target("benchmark", "benchmark.cpp")
 -- WFC overhead benchmark / WFC 开销基准测试
 example_target("benchmark_wfc_overhead", "benchmark_wfc_overhead.cpp")
 
+-- Name lookup benchmark / 名称查找基准测试
+example_target("benchmark_name_lookup", "benchmark_name_lookup.cpp")
+
 -- ==============================================================================
 -- spdlog comparison benchmark (optional)
 -- spdlog 对比测试（可选）

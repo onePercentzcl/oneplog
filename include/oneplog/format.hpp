@@ -34,6 +34,26 @@ namespace oneplog {
 class Sink;
 
 // ==============================================================================
+// Name Lookup Interface for MProc Consumer / MProc 消费者名称查找接口
+// ==============================================================================
+
+/**
+ * @brief Interface for looking up process/thread names from shared memory
+ * @brief 从共享内存查找进程/线程名称的接口
+ *
+ * This interface allows Format to look up names without depending on
+ * the SharedMemory template class directly.
+ *
+ * 此接口允许 Format 查找名称，而不直接依赖 SharedMemory 模板类。
+ */
+class INameLookup {
+public:
+    virtual ~INameLookup() = default;
+    virtual const char* GetProcessName(uint32_t id) const = 0;
+    virtual const char* GetThreadName(uint32_t id) const = 0;
+};
+
+// ==============================================================================
 // ANSI Color Codes / ANSI 颜色代码
 // ==============================================================================
 
@@ -176,18 +196,39 @@ public:
     const std::string& GetModuleName() const { return m_moduleName; }
 
     /**
-     * @brief Resolve process name (global constant)
-     * @brief 解析进程名（全局常量）
+     * @brief Set name lookup interface for MProc consumer mode
+     * @brief 设置 MProc 消费者模式的名称查找接口
+     *
+     * When set, Format will use this interface to look up process/thread names
+     * from shared memory instead of using local names.
+     *
+     * 设置后，Format 将使用此接口从共享内存查找进程/线程名称，
+     * 而不是使用本地名称。
+     */
+    void SetNameLookup(INameLookup* lookup) { m_nameLookup = lookup; }
+    INameLookup* GetNameLookup() const { return m_nameLookup; }
+
+    /**
+     * @brief Resolve process name
+     * @brief 解析进程名
+     *
+     * For MProc consumer: looks up from shared memory via INameLookup
+     * For local process: uses global process name
      *
      * @param processId Process ID (for MProc consumer lookup) / 进程 ID（用于 MProc 消费者查找）
      * @return Resolved process name (padded to 6 chars) / 解析后的进程名（填充到 6 字符）
      */
-    static std::string ResolveProcessName(uint32_t processId = 0) {
-        // Always use global process name for local process
-        // 对于本地进程，始终使用全局进程名
-        // Note: processId is only used for MProc consumer mode with SharedMemory lookup
-        // 注意：processId 仅用于 MProc 消费者模式的 SharedMemory 查找
-        (void)processId;  // Unused in current implementation
+    std::string ResolveProcessName(uint32_t processId = 0) const {
+        // For MProc consumer: lookup from shared memory
+        if (m_nameLookup && processId != 0) {
+            const char* name = m_nameLookup->GetProcessName(processId);
+            if (name && name[0] != '\0') {
+                return PadOrTruncate(name, 6);
+            }
+            // Fallback to PID string if not found
+            return PadOrTruncate(std::to_string(processId), 6);
+        }
+        // For local process: use global process name
         return PadOrTruncate(oneplog::GetProcessName(), 6);
     }
 
@@ -195,19 +236,28 @@ public:
      * @brief Resolve module name by thread ID
      * @brief 通过线程 ID 解析模块名
      *
+     * For MProc consumer: looks up from shared memory via INameLookup
      * For Sync mode: returns current thread's module name (thread_local)
      * For Async mode: looks up from TID-module table
-     * For MProc consumer: looks up from shared memory
      *
      * @param threadId Thread ID (0 for current thread) / 线程 ID（0 表示当前线程）
      * @return Resolved module name (padded to 6 chars) / 解析后的模块名（填充到 6 字符）
      */
-    static std::string ResolveModuleName(uint32_t threadId = 0) {
+    std::string ResolveModuleName(uint32_t threadId = 0) const {
+        // For MProc consumer: lookup from shared memory
+        if (m_nameLookup && threadId != 0) {
+            const char* name = m_nameLookup->GetThreadName(threadId);
+            if (name && name[0] != '\0') {
+                return PadOrTruncate(name, 6);
+            }
+            // Fallback to TID string if not found
+            return PadOrTruncate(std::to_string(threadId), 6);
+        }
         // For current thread (Sync mode or direct call)
         if (threadId == 0) {
             return PadOrTruncate(oneplog::GetModuleName(), 6);
         }
-        // For Async/MProc: lookup by TID
+        // For Async mode: lookup by TID from local table
         std::string name = LookupModuleName(threadId);
         return PadOrTruncate(name, 6);
     }
@@ -352,6 +402,7 @@ protected:
     std::string m_processName = " main ";  // Default 6 chars centered
     std::string m_moduleName = " main ";   // Default 6 chars centered
     bool m_useDynamicNames = true;         // Use NameManager by default / 默认使用 NameManager
+    INameLookup* m_nameLookup = nullptr;   // For MProc consumer mode / 用于 MProc 消费者模式
 };
 
 

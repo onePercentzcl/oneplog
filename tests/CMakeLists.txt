@@ -33,6 +33,7 @@ set(TEST_SOURCES
     test_log_entry.cpp
     test_heap_ring_buffer.cpp
     test_name_manager.cpp
+    test_direct_mapping_table.cpp
 )
 
 # ==============================================================================

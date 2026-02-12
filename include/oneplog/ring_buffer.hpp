@@ -16,17 +16,17 @@
 #include <vector>
 
 #if defined(__cpp_lib_hardware_interference_size) && __cpp_lib_hardware_interference_size >= 201703L
-#include <new>
+    #include <new>
 #endif
 
 // Platform-specific includes
 #ifdef __linux__
-#include <sys/eventfd.h>
-#include <unistd.h>
-#include <poll.h>
+    #include <poll.h>
+    #include <sys/eventfd.h>
+    #include <unistd.h>
 #elif defined(__APPLE__)
-#include <dispatch/dispatch.h>
-#include <unistd.h>
+    #include <dispatch/dispatch.h>
+    #include <unistd.h>
 #endif
 
 namespace oneplog {
@@ -45,7 +45,7 @@ constexpr size_t kCacheLineSize = 64;
 // CacheLineAligned / 缓存行对齐
 // ==============================================================================
 
-template<typename T>
+template <typename T>
 struct alignas(kCacheLineSize) CacheLineAligned {
     T value;
 
@@ -94,14 +94,11 @@ inline void CpuPause() noexcept {
  * @param spinCount Current spin iteration count / 当前自旋迭代计数
  * @return Updated spin count / 更新后的自旋计数
  */
-inline int SpinWait(int spinCount) noexcept {
-    constexpr int kSpinCount = 1000;   // Pure spin iterations / 纯自旋迭代次数
-    constexpr int kPauseCount = 2000;  // Pause iterations / pause 迭代次数
-    
-    if (spinCount < kSpinCount) {
+inline int SpinWait(const int spinCount) noexcept {
+    if (constexpr int kSpinCount = 1000; spinCount < kSpinCount) {
         // Phase 1: Pure spin / 阶段1：纯自旋
         return spinCount + 1;
-    } else if (spinCount < kPauseCount) {
+    } else if (constexpr int kPauseCount = 2000; spinCount < kPauseCount) {
         // Phase 2: Pause instruction / 阶段2：pause 指令
         CpuPause();
         return spinCount + 1;
@@ -124,23 +121,11 @@ inline void SpinOnce() noexcept {
 // Enums / 枚举
 // ==============================================================================
 
-enum class QueueFullPolicy : uint8_t {
-    Block = 0,
-    DropNewest = 1,
-    DropOldest = 2
-};
+enum class QueueFullPolicy : uint8_t { Block = 0, DropNewest = 1, DropOldest = 2 };
 
-enum class ConsumerState : uint8_t {
-    Active = 0,
-    WaitingNotify = 1
-};
+enum class ConsumerState : uint8_t { Active = 0, WaitingNotify = 1 };
 
-enum class SlotState : uint8_t {
-    Empty = 0,
-    Writing = 1,
-    Ready = 2,
-    Reading = 3
-};
+enum class SlotState : uint8_t { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
 
 using WFCState = uint8_t;
 constexpr WFCState kWFCNone = 0;
@@ -176,10 +161,18 @@ struct alignas(kCacheLineSize) SlotStatus {
         wfc.store(kWFCNone, std::memory_order_release);
     }
 
-    bool IsEmpty() const noexcept { return state.load(std::memory_order_acquire) == SlotState::Empty; }
-    bool IsReady() const noexcept { return state.load(std::memory_order_acquire) == SlotState::Ready; }
-    bool IsWFCEnabled() const noexcept { return wfc.load(std::memory_order_acquire) == kWFCEnabled; }
-    bool IsWFCCompleted() const noexcept { return wfc.load(std::memory_order_acquire) == kWFCCompleted; }
+    bool IsEmpty() const noexcept {
+        return state.load(std::memory_order_acquire) == SlotState::Empty;
+    }
+    bool IsReady() const noexcept {
+        return state.load(std::memory_order_acquire) == SlotState::Ready;
+    }
+    bool IsWFCEnabled() const noexcept {
+        return wfc.load(std::memory_order_acquire) == kWFCEnabled;
+    }
+    bool IsWFCCompleted() const noexcept {
+        return wfc.load(std::memory_order_acquire) == kWFCCompleted;
+    }
 
     bool TryAcquire() noexcept {
         SlotState expected = SlotState::Empty;
@@ -224,15 +217,15 @@ struct alignas(kCacheLineSize) RingBufferHeader {
     alignas(kCacheLineSize) std::atomic<size_t> tail{0};
     alignas(kCacheLineSize) std::atomic<ConsumerState> consumerState{ConsumerState::Active};
     alignas(kCacheLineSize) std::atomic<uint64_t> droppedCount{0};
-    
+
     size_t capacity{0};
     QueueFullPolicy policy{QueueFullPolicy::DropNewest};
-    uint32_t magic{0};      // Magic number for validation
-    uint32_t version{0};    // Version for compatibility check
-    
+    uint32_t magic{0};    // Magic number for validation
+    uint32_t version{0};  // Version for compatibility check
+
     static constexpr uint32_t kMagic = 0x4F4E4550;  // "ONEP"
     static constexpr uint32_t kVersion = 1;
-    
+
     void Init(size_t cap, QueueFullPolicy pol) noexcept {
         head.store(0, std::memory_order_relaxed);
         tail.store(0, std::memory_order_relaxed);
@@ -243,12 +236,9 @@ struct alignas(kCacheLineSize) RingBufferHeader {
         magic = kMagic;
         version = kVersion;
     }
-    
-    bool IsValid() const noexcept {
-        return magic == kMagic && version == kVersion;
-    }
-};
 
+    bool IsValid() const noexcept { return magic == kMagic && version == kVersion; }
+};
 
 // ==============================================================================
 // RingBufferBase - Full Implementation / 环形队列基类（完整实现）
@@ -266,14 +256,12 @@ struct alignas(kCacheLineSize) RingBufferHeader {
  *                   When false, WFC checks are completely eliminated at compile time.
  *                   当为 false 时，WFC 检查在编译时完全消除。
  */
-template<typename T, bool EnableWFC = true>
+template <typename T, bool EnableWFC = true>
 class RingBufferBase {
-public:
+   public:
     static constexpr int64_t kInvalidSlot = -1;
 
-    virtual ~RingBufferBase() {
-        CleanupNotification();
-    }
+    virtual ~RingBufferBase() { CleanupNotification(); }
 
     // Non-copyable
     RingBufferBase(const RingBufferBase&) = delete;
@@ -283,20 +271,24 @@ public:
     // Configuration / 配置
     // =========================================================================
 
-    void SetPolicy(QueueFullPolicy policy) noexcept { 
-        if (m_header) { m_header->policy = policy; }
+    void SetPolicy(QueueFullPolicy policy) noexcept {
+        if (m_header) {
+            m_header->policy = policy;
+        }
     }
-    
-    QueueFullPolicy GetPolicy() const noexcept { 
-        return m_header ? m_header->policy : QueueFullPolicy::DropNewest; 
+
+    QueueFullPolicy GetPolicy() const noexcept {
+        return m_header ? m_header->policy : QueueFullPolicy::DropNewest;
     }
-    
-    uint64_t GetDroppedCount() const noexcept { 
-        return m_header ? m_header->droppedCount.load(std::memory_order_relaxed) : 0; 
+
+    uint64_t GetDroppedCount() const noexcept {
+        return m_header ? m_header->droppedCount.load(std::memory_order_relaxed) : 0;
     }
-    
-    void ResetDroppedCount() noexcept { 
-        if (m_header) { m_header->droppedCount.store(0, std::memory_order_relaxed); }
+
+    void ResetDroppedCount() noexcept {
+        if (m_header) {
+            m_header->droppedCount.store(0, std::memory_order_relaxed);
+        }
     }
 
     // =========================================================================
@@ -310,16 +302,18 @@ public:
      * @param isWFC If true, always block when full (WFC logs never dropped)
      */
     int64_t AcquireSlot(bool isWFC = false) noexcept {
-        if (!m_header || !m_slotStatus) { return kInvalidSlot; }
-        
+        if (!m_header || !m_slotStatus) {
+            return kInvalidSlot;
+        }
+
         size_t head = m_header->head.load(std::memory_order_relaxed);
         size_t capacity = m_header->capacity;
         int spinCount = 0;
-        
+
         while (true) {
             // Only need acquire to see tail updates from consumer
             size_t tail = m_header->tail.load(std::memory_order_acquire);
-            
+
             if (head - tail >= capacity) {
                 // WFC logs NEVER get dropped (only when EnableWFC is true)
                 if constexpr (EnableWFC) {
@@ -329,12 +323,12 @@ public:
                         continue;
                     }
                 }
-                
+
                 switch (m_header->policy) {
                     case QueueFullPolicy::DropNewest:
                         m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
                         return kInvalidSlot;
-                    
+
                     case QueueFullPolicy::DropOldest: {
                         size_t oldestSlot = tail % capacity;
                         // WFC check only when EnableWFC is true
@@ -345,12 +339,14 @@ public:
                                 continue;
                             }
                         }
-                        if (DropOldestEntry()) { continue; }
+                        if (DropOldestEntry()) {
+                            continue;
+                        }
                         spinCount = SpinWait(spinCount);
                         head = m_header->head.load(std::memory_order_relaxed);
                         continue;
                     }
-                    
+
                     case QueueFullPolicy::Block:
                     default:
                         spinCount = SpinWait(spinCount);
@@ -358,11 +354,10 @@ public:
                         continue;
                 }
             }
-            
+
             // Use release on success to ensure slot data is visible before head update
             // Use relaxed on failure since we'll retry anyway
-            if (m_header->head.compare_exchange_weak(head, head + 1,
-                                                     std::memory_order_release,
+            if (m_header->head.compare_exchange_weak(head, head + 1, std::memory_order_release,
                                                      std::memory_order_relaxed)) {
                 size_t slot = head % capacity;
                 int slotSpinCount = 0;
@@ -375,16 +370,18 @@ public:
     }
 
     void CommitSlot(int64_t slot, T&& item) noexcept {
-        if (!m_header || !m_buffer || slot < 0 || 
-            static_cast<size_t>(slot) >= m_header->capacity) { return; }
+        if (!m_header || !m_buffer || slot < 0 || static_cast<size_t>(slot) >= m_header->capacity) {
+            return;
+        }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = std::move(item);
         m_slotStatus[idx].Commit();
     }
 
     void CommitSlot(int64_t slot, const T& item) noexcept {
-        if (!m_header || !m_buffer || slot < 0 || 
-            static_cast<size_t>(slot) >= m_header->capacity) { return; }
+        if (!m_header || !m_buffer || slot < 0 || static_cast<size_t>(slot) >= m_header->capacity) {
+            return;
+        }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = item;
         m_slotStatus[idx].Commit();
@@ -392,15 +389,20 @@ public:
 
     bool TryPush(T&& item) noexcept {
         int64_t slot = AcquireSlot(false);
-        if (slot == kInvalidSlot) { return false; }
+        if (slot == kInvalidSlot) {
+            return false;
+        }
         CommitSlot(slot, std::move(item));
         NotifyConsumerIfWaiting();
         return true;
     }
 
     bool TryPush(const T& item) noexcept {
+        // ReSharper disable once CppLocalVariableMayBeConst
         int64_t slot = AcquireSlot(false);
-        if (slot == kInvalidSlot) { return false; }
+        if (slot == kInvalidSlot) {
+            return false;
+        }
         CommitSlot(slot, item);
         NotifyConsumerIfWaiting();
         return true;
@@ -410,10 +412,12 @@ public:
      * @brief Push with WFC - NEVER dropped, blocks if queue is full
      * @note Only available when EnableWFC is true
      */
-    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
     int64_t TryPushWFC(T&& item) noexcept {
         int64_t slot = AcquireSlot(true);
-        if (slot == kInvalidSlot) { return kInvalidSlot; }
+        if (slot == kInvalidSlot) {
+            return kInvalidSlot;
+        }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = std::move(item);
         m_slotStatus[idx].EnableWFC();
@@ -422,10 +426,12 @@ public:
         return slot;
     }
 
-    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
     int64_t TryPushWFC(const T& item) noexcept {
         int64_t slot = AcquireSlot(true);
-        if (slot == kInvalidSlot) { return kInvalidSlot; }
+        if (slot == kInvalidSlot) {
+            return kInvalidSlot;
+        }
         size_t idx = static_cast<size_t>(slot);
         m_buffer[idx] = item;
         m_slotStatus[idx].EnableWFC();
@@ -439,27 +445,33 @@ public:
     // =========================================================================
 
     bool TryPop(T& item) noexcept {
-        if (!m_header || !m_buffer || !m_slotStatus) { return false; }
-        
+        if (!m_header || !m_buffer || !m_slotStatus) {
+            return false;
+        }
+
         size_t tail = m_header->tail.load(std::memory_order_relaxed);
         size_t slot = tail % m_header->capacity;
-        
+
         // Check slot state directly - only reads one cache line
         // 直接检查槽位状态 - 只读取一个缓存行
-        if (!m_slotStatus[slot].TryStartRead()) { return false; }
-        
+        if (!m_slotStatus[slot].TryStartRead()) {
+            return false;
+        }
+
         item = std::move(m_buffer[slot]);
-        
+
         // WFC check is completely eliminated at compile time when EnableWFC is false
         // 当 EnableWFC 为 false 时，WFC 检查在编译时完全消除
         if constexpr (EnableWFC) {
             bool hasWFC = m_slotStatus[slot].IsWFCEnabled();
             m_slotStatus[slot].CompleteRead();
-            if (hasWFC) { m_slotStatus[slot].CompleteWFC(); }
+            if (hasWFC) {
+                m_slotStatus[slot].CompleteWFC();
+            }
         } else {
             m_slotStatus[slot].CompleteRead();
         }
-        
+
         // Use release to ensure item read is complete before tail update
         m_header->tail.store(tail + 1, std::memory_order_release);
         return true;
@@ -468,7 +480,7 @@ public:
     size_t TryPopBatch(std::vector<T>& items, size_t maxCount) noexcept {
         items.clear();
         items.reserve(maxCount);
-        
+
         size_t count = 0;
         T item;
         while (count < maxCount && TryPop(item)) {
@@ -483,34 +495,40 @@ public:
     // Only available when EnableWFC is true / 仅在 EnableWFC 为 true 时可用
     // =========================================================================
 
-    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
     void MarkWFCComplete(int64_t slot) noexcept {
-        if (m_header && m_slotStatus && slot >= 0 && 
+        if (m_header && m_slotStatus && slot >= 0 &&
             static_cast<size_t>(slot) < m_header->capacity) {
             m_slotStatus[static_cast<size_t>(slot)].CompleteWFC();
         }
     }
 
-    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
     bool WaitForCompletion(int64_t slot, std::chrono::milliseconds timeout) noexcept {
-        if (!m_header || !m_slotStatus || slot < 0 || 
-            static_cast<size_t>(slot) >= m_header->capacity) { return false; }
-        
+        if (!m_header || !m_slotStatus || slot < 0 ||
+            static_cast<size_t>(slot) >= m_header->capacity) {
+            return false;
+        }
+
         size_t idx = static_cast<size_t>(slot);
         auto deadline = std::chrono::steady_clock::now() + timeout;
         int spinCount = 0;
-        
+
         while (std::chrono::steady_clock::now() < deadline) {
-            if (m_slotStatus[idx].IsWFCCompleted()) { return true; }
+            if (m_slotStatus[idx].IsWFCCompleted()) {
+                return true;
+            }
             spinCount = SpinWait(spinCount);
         }
         return m_slotStatus[idx].IsWFCCompleted();
     }
 
-    template<bool E = EnableWFC, typename = std::enable_if_t<E>>
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
     WFCState GetWFCState(int64_t slot) const noexcept {
-        if (!m_header || !m_slotStatus || slot < 0 || 
-            static_cast<size_t>(slot) >= m_header->capacity) { return kWFCNone; }
+        if (!m_header || !m_slotStatus || slot < 0 ||
+            static_cast<size_t>(slot) >= m_header->capacity) {
+            return kWFCNone;
+        }
         return m_slotStatus[static_cast<size_t>(slot)].GetWFCState();
     }
 
@@ -519,7 +537,9 @@ public:
     // =========================================================================
 
     bool IsEmpty() const noexcept {
-        if (!m_header || !m_slotStatus) { return true; }
+        if (!m_header || !m_slotStatus) {
+            return true;
+        }
         size_t tail = m_header->tail.load(std::memory_order_relaxed);
         size_t slot = tail % m_header->capacity;
         // Check if next slot is ready - only reads one cache line
@@ -528,28 +548,29 @@ public:
     }
 
     bool IsFull() const noexcept {
-        if (!m_header) { return false; }
+        if (!m_header) {
+            return false;
+        }
         size_t tail = m_header->tail.load(std::memory_order_acquire);
         size_t head = m_header->head.load(std::memory_order_acquire);
         return head - tail >= m_header->capacity;
     }
 
     size_t Size() const noexcept {
-        if (!m_header) { return 0; }
+        if (!m_header) {
+            return 0;
+        }
         size_t tail = m_header->tail.load(std::memory_order_acquire);
         size_t head = m_header->head.load(std::memory_order_acquire);
         return (head > tail) ? (head - tail) : 0;
     }
 
-    size_t Capacity() const noexcept { 
-        return m_header ? m_header->capacity : 0; 
-    }
-    
-    ConsumerState GetConsumerState() const noexcept { 
-        return m_header ? m_header->consumerState.load(std::memory_order_acquire) 
-                        : ConsumerState::Active; 
-    }
+    size_t Capacity() const noexcept { return m_header ? m_header->capacity : 0; }
 
+    ConsumerState GetConsumerState() const noexcept {
+        return m_header ? m_header->consumerState.load(std::memory_order_acquire)
+                        : ConsumerState::Active;
+    }
 
     // =========================================================================
     // Notification Mechanism / 通知机制
@@ -557,11 +578,15 @@ public:
 
 #ifdef __linux__
     int GetEventFD() const noexcept { return m_eventFd; }
-    void SetEventFD(int fd) noexcept { m_eventFd = fd; m_ownsEventFd = false; }
+    void SetEventFD(int fd) noexcept {
+        m_eventFd = fd;
+        m_ownsEventFd = false;
+    }
 #endif
 
     void NotifyConsumerIfWaiting() noexcept {
-        if (m_header && m_header->consumerState.load(std::memory_order_acquire) == ConsumerState::WaitingNotify) {
+        if (m_header && m_header->consumerState.load(std::memory_order_acquire) ==
+                            ConsumerState::WaitingNotify) {
             DoNotify();
         }
     }
@@ -570,62 +595,67 @@ public:
 
     bool WaitForData(std::chrono::microseconds pollInterval,
                      std::chrono::milliseconds pollTimeout) noexcept {
-        if (!m_header) { return false; }
-        
+        if (!m_header) {
+            return false;
+        }
+
         m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
-        
+
         // Phase 1: Spin poll with exponential backoff
         // 阶段1：使用指数退避的自旋轮询
         auto pollEnd = std::chrono::steady_clock::now() + pollInterval;
         int spinCount = 0;
         while (std::chrono::steady_clock::now() < pollEnd) {
-            if (!IsEmpty()) { return true; }
+            if (!IsEmpty()) {
+                return true;
+            }
             spinCount = SpinWait(spinCount);
         }
-        
-        if (!IsEmpty()) { return true; }
-        
+
+        if (!IsEmpty()) {
+            return true;
+        }
+
         // Phase 2: Enter waiting state
         // 阶段2：进入等待状态
         m_header->consumerState.store(ConsumerState::WaitingNotify, std::memory_order_release);
-        
+
         // Double-check
         if (!IsEmpty()) {
             m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
             return true;
         }
-        
+
         // Phase 3: Wait for notification
         // 阶段3：等待通知
         bool hasData = DoWait(pollTimeout);
         m_header->consumerState.store(ConsumerState::Active, std::memory_order_release);
-        
+
         return hasData || !IsEmpty();
     }
 
-protected:
+   protected:
     // Protected constructor for derived classes
     RingBufferBase() = default;
-    
+
     // Initialize with external memory (for SharedRingBuffer)
-    void InitWithExternalMemory(RingBufferHeader* header, T* buffer, 
-                                SlotStatus* slotStatus, bool initHeader,
-                                size_t capacity, QueueFullPolicy policy) noexcept {
+    void InitWithExternalMemory(RingBufferHeader* header, T* buffer, SlotStatus* slotStatus,
+                                bool initHeader, size_t capacity, QueueFullPolicy policy) noexcept {
         m_header = header;
         m_buffer = buffer;
         m_slotStatus = slotStatus;
-        
+
         if (initHeader && m_header) {
             m_header->Init(capacity, policy);
         }
-        
+
         if (initHeader && m_slotStatus) {
             for (size_t i = 0; i < capacity; ++i) {
                 m_slotStatus[i].Reset();
             }
         }
     }
-    
+
     // Initialize notification mechanism
     void InitNotification() noexcept {
 #ifdef __linux__
@@ -640,7 +670,7 @@ protected:
         }
 #endif
     }
-    
+
     void CleanupNotification() noexcept {
 #ifdef __linux__
         if (m_ownsEventFd && m_eventFd >= 0) {
@@ -655,27 +685,34 @@ protected:
     }
 
     bool DropOldestEntry() noexcept {
-        if (!m_header || !m_slotStatus) { return false; }
-        
+        if (!m_header || !m_slotStatus) {
+            return false;
+        }
+
         size_t tail = m_header->tail.load(std::memory_order_relaxed);
         size_t head = m_header->head.load(std::memory_order_acquire);
-        
-        if (tail >= head) { return false; }
-        
+
+        if (tail >= head) {
+            return false;
+        }
+
         size_t slot = tail % m_header->capacity;
-        
+
         // WFC check only when EnableWFC is true
         if constexpr (EnableWFC) {
-            if (m_slotStatus[slot].IsWFCEnabled()) { return false; }
+            if (m_slotStatus[slot].IsWFCEnabled()) {
+                return false;
+            }
         }
-        if (!m_slotStatus[slot].TryStartRead()) { return false; }
-        
+        if (!m_slotStatus[slot].TryStartRead()) {
+            return false;
+        }
+
         m_slotStatus[slot].CompleteRead();
-        
+
         // Use release to ensure slot cleanup is visible before tail update
-        if (m_header->tail.compare_exchange_strong(tail, tail + 1,
-                                                    std::memory_order_release,
-                                                    std::memory_order_relaxed)) {
+        if (m_header->tail.compare_exchange_strong(tail, tail + 1, std::memory_order_release,
+                                                   std::memory_order_relaxed)) {
             m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
@@ -702,7 +739,7 @@ protected:
             pfd.fd = m_eventFd;
             pfd.events = POLLIN;
             pfd.revents = 0;
-            
+
             int ret = poll(&pfd, 1, static_cast<int>(timeout.count()));
             if (ret > 0 && (pfd.revents & POLLIN)) {
                 uint64_t val;
@@ -714,8 +751,7 @@ protected:
 #elif defined(__APPLE__)
         if (m_semaphore != nullptr) {
             dispatch_time_t dt = dispatch_time(
-                DISPATCH_TIME_NOW, 
-                static_cast<int64_t>(timeout.count()) * NSEC_PER_MSEC);
+                DISPATCH_TIME_NOW, static_cast<int64_t>(timeout.count()) * NSEC_PER_MSEC);
             long ret = dispatch_semaphore_wait(m_semaphore, dt);
             return ret == 0;
         }
@@ -724,7 +760,7 @@ protected:
         return !IsEmpty();
     }
 
-protected:
+   protected:
     RingBufferHeader* m_header{nullptr};
     T* m_buffer{nullptr};
     SlotStatus* m_slotStatus{nullptr};
