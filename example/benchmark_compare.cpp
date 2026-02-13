@@ -169,7 +169,9 @@ public:
 
 Stats BenchOneplogSync(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+    // Disable shadow tail for low contention scenario (single thread)
+    // 低竞争场景（单线程）禁用影子 tail
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false, false> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     logger.Init();
@@ -196,7 +198,9 @@ Stats BenchOneplogSync(const Config& cfg) {
 
 Stats BenchOneplogAsync(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    // Disable shadow tail for low contention scenario (single thread)
+    // 低竞争场景（单线程）禁用影子 tail
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, false> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     
@@ -230,7 +234,9 @@ Stats BenchOneplogAsync(const Config& cfg) {
 
 Stats BenchOneplogAsyncMT(const Config& cfg) {
     auto sink = std::make_shared<NullSink>();
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    // Keep shadow tail enabled for multi-thread scenario (higher contention)
+    // 多线程场景保持启用影子 tail（较高竞争）
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, true> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     
@@ -286,7 +292,9 @@ Stats BenchOneplogAsyncMT(const Config& cfg) {
 Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false> logger;
+    // Disable shadow tail for low contention scenario (single thread)
+    // 低竞争场景（单线程）禁用影子 tail
+    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false, false> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     logger.Init();
@@ -316,7 +324,9 @@ Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
 Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    // Disable shadow tail for low contention scenario (single thread)
+    // 低竞争场景（单线程）禁用影子 tail
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, false> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     
@@ -351,7 +361,9 @@ Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
 Stats BenchOneplogAsyncFileMT(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<oneplog::FileSink>(filename);
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false> logger;
+    // Keep shadow tail enabled for multi-thread scenario (higher contention)
+    // 多线程场景保持启用影子 tail（较高竞争）
+    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, true> logger;
     logger.SetSink(sink);
     logger.SetFormat(std::make_shared<SimpleFormat>());
     

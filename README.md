@@ -264,6 +264,41 @@ int main() {
 | Async | 全局变量 | thread_local + 堆上 TID-模块名表 | WriterThread 通过 TID 查表 |
 | MProc | 全局变量 + 共享内存 | thread_local + 共享内存 | 消费者进程通过共享内存查表 |
 
+### 名称查找优化
+
+onePlog 针对不同平台实现了优化的名称查找表：
+
+| 平台 | 查找表类型 | 时间复杂度 | 说明 |
+|------|-----------|-----------|------|
+| Linux | DirectMappingTable | O(1) | 使用 TID 作为数组索引直接映射 |
+| macOS/Windows | ArrayMappingTable | O(n) | 使用线性搜索的数组映射 |
+
+编译期自动选择最优实现，无需手动配置。
+
+#### 编译期配置选项
+
+可通过宏定义自定义名称查找行为：
+
+```cpp
+// 自定义最大名称长度（默认 15，Linux TASK_COMM_LEN - 1）
+#define ONEPLOG_MAX_NAME_LENGTH 31
+
+// 禁用优化查找表（使用原始实现）
+#define ONEPLOG_USE_OPTIMIZED_LOOKUP 0
+```
+
+#### 性能提升
+
+在 Apple M4 Pro (macOS) 上的测试结果：
+
+| 测试场景 | 优化前 | 优化后 | 提升 |
+|----------|--------|--------|------|
+| 4线程名称查找 | 33.83 M ops/s | 40.29 M ops/s | +19.1% |
+| 4线程异步日志 | 6.78 M ops/s | 7.69 M ops/s | +13.4% |
+| 多进程模式 | 30.82 K ops/s | 32.46 K ops/s | +5.3% |
+
+注意：Linux 平台使用 O(1) 直接映射，性能提升更显著。
+
 ## 运行模式
 
 - **同步模式 (Sync)**：日志直接在调用线程中输出，适合调试

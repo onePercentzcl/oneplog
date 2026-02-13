@@ -264,6 +264,41 @@ int main() {
 | Async | Global variable | thread_local + Heap TID-module table | WriterThread looks up by TID |
 | MProc | Global variable + Shared memory | thread_local + Shared memory | Consumer process looks up via shared memory |
 
+### Name Lookup Optimization
+
+onePlog implements optimized name lookup tables for different platforms:
+
+| Platform | Lookup Table Type | Time Complexity | Description |
+|----------|------------------|-----------------|-------------|
+| Linux | DirectMappingTable | O(1) | Direct mapping using TID as array index |
+| macOS/Windows | ArrayMappingTable | O(n) | Linear search with array mapping |
+
+The optimal implementation is automatically selected at compile time, no manual configuration needed.
+
+#### Compile-time Configuration Options
+
+Customize name lookup behavior via macros:
+
+```cpp
+// Custom maximum name length (default: 15, Linux TASK_COMM_LEN - 1)
+#define ONEPLOG_MAX_NAME_LENGTH 31
+
+// Disable optimized lookup table (use original implementation)
+#define ONEPLOG_USE_OPTIMIZED_LOOKUP 0
+```
+
+#### Performance Improvements
+
+Test results on Apple M4 Pro (macOS):
+
+| Test Scenario | Before | After | Improvement |
+|---------------|--------|-------|-------------|
+| 4-thread name lookup | 33.83 M ops/s | 40.29 M ops/s | +19.1% |
+| 4-thread async logging | 6.78 M ops/s | 7.69 M ops/s | +13.4% |
+| Multi-process mode | 30.82 K ops/s | 32.46 K ops/s | +5.3% |
+
+Note: Linux platform uses O(1) direct mapping, performance improvement is more significant.
+
 ## Operating Modes
 
 - **Sync Mode**: Logs are output directly in the calling thread, suitable for debugging

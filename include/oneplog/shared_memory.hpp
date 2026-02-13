@@ -281,6 +281,7 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
  * @brief 多进程日志的共享内存管理器
  *
  * @tparam EnableWFC Enable WFC support for SharedRingBuffer / 启用 SharedRingBuffer 的 WFC 支持
+ * @tparam EnableShadowTail Enable shadow tail optimization / 启用影子 tail 优化
  *
  * Memory Layout / 内存布局:
  * +---------------------------+
@@ -293,7 +294,7 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
  * | SharedRingBuffer memory   |  (cache-line aligned / 缓存行对齐)
  * +---------------------------+
  */
-template<bool EnableWFC = true>
+template<bool EnableWFC = true, bool EnableShadowTail = true>
 class SharedMemory {
 public:
     /**
@@ -359,8 +360,8 @@ public:
         shm->m_nameTable->Init();
         
         void* ringBufferMemory = static_cast<uint8_t*>(memory) + ringBufferOffset;
-        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(ringBufferCapacity);
-        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC>::Create(
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>::CalculateRequiredSize(ringBufferCapacity);
+        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>::Create(
             ringBufferMemory, ringBufferSize, ringBufferCapacity, policy);
         
         if (!shm->m_ringBuffer) {
@@ -416,9 +417,9 @@ public:
             static_cast<uint8_t*>(memory) + metadata->nameTableOffset);
         
         void* ringBufferMemory = static_cast<uint8_t*>(memory) + metadata->ringBufferOffset;
-        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>::CalculateRequiredSize(
             metadata->ringBufferCapacity);
-        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC>::Connect(ringBufferMemory, ringBufferSize);
+        shm->m_ringBuffer = SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>::Connect(ringBufferMemory, ringBufferSize);
         
         if (!shm->m_ringBuffer) {
             munmap(memory, totalSize);
@@ -437,7 +438,7 @@ public:
         size_t metadataSize = AlignUp(sizeof(SharedMemoryMetadata), kCacheLineSize);
         size_t configSize = AlignUp(sizeof(SharedLoggerConfig), kCacheLineSize);
         size_t nameTableSize = AlignUp(sizeof(ProcessThreadNameTable), kCacheLineSize);
-        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC>::CalculateRequiredSize(ringBufferCapacity);
+        size_t ringBufferSize = SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>::CalculateRequiredSize(ringBufferCapacity);
         
         return metadataSize + configSize + nameTableSize + ringBufferSize;
     }
@@ -479,8 +480,8 @@ public:
     ProcessThreadNameTable* GetNameTable() noexcept { return m_nameTable; }
     const ProcessThreadNameTable* GetNameTable() const noexcept { return m_nameTable; }
     
-    SharedRingBuffer<LogEntry, EnableWFC>* GetRingBuffer() noexcept { return m_ringBuffer; }
-    const SharedRingBuffer<LogEntry, EnableWFC>* GetRingBuffer() const noexcept { return m_ringBuffer; }
+    SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>* GetRingBuffer() noexcept { return m_ringBuffer; }
+    const SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>* GetRingBuffer() const noexcept { return m_ringBuffer; }
     
     // =========================================================================
     // Name Registration / 名称注册
@@ -547,7 +548,7 @@ private:
     SharedMemoryMetadata* m_metadata{nullptr};
     SharedLoggerConfig* m_config{nullptr};
     ProcessThreadNameTable* m_nameTable{nullptr};
-    SharedRingBuffer<LogEntry, EnableWFC>* m_ringBuffer{nullptr};
+    SharedRingBuffer<LogEntry, EnableWFC, EnableShadowTail>* m_ringBuffer{nullptr};
 };
 
 }  // namespace oneplog

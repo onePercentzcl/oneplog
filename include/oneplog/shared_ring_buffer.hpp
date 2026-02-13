@@ -52,11 +52,12 @@ namespace oneplog {
  *
  * @tparam T The element type to store / 要存储的元素类型
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
+ * @tparam EnableShadowTail Enable shadow tail optimization / 启用影子 tail 优化
  */
-template<typename T, bool EnableWFC = true>
-class SharedRingBuffer : public RingBufferBase<T, EnableWFC> {
+template<typename T, bool EnableWFC = true, bool EnableShadowTail = true>
+class SharedRingBuffer : public RingBufferBase<T, EnableWFC, EnableShadowTail> {
 public:
-    using Base = RingBufferBase<T, EnableWFC>;
+    using Base = RingBufferBase<T, EnableWFC, EnableShadowTail>;
 
     /**
      * @brief Calculate required memory size for shared ring buffer

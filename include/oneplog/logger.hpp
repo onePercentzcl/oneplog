@@ -99,22 +99,28 @@ struct LoggerConfig {
  * @tparam M Operating mode (Sync/Async/MProc), default: Mode::Async
  * @tparam L Compile-time minimum log level, default: kDefaultLevel
  * @tparam EnableWFC Enable WFC (Wait For Completion) functionality, default: false
+ * @tparam EnableShadowTail Enable shadow tail optimization, default: true
+ *                          Set to false for low contention scenarios (lower overhead).
  *
  * @tparam M 运行模式（Sync/Async/MProc），默认：Mode::Async
  * @tparam L 编译时最小日志级别，默认：kDefaultLevel
  * @tparam EnableWFC 启用 WFC（等待完成）功能，默认：false
+ * @tparam EnableShadowTail 启用影子 tail 优化，默认：true
+ *                          设为 false 适合低竞争场景（更低开销）。
  *
  * Features:
  * - Compile-time mode selection eliminates runtime branching
  * - Compile-time level filtering optimizes away disabled log calls
  * - WFC functionality can be completely disabled at compile time
+ * - Shadow tail optimization can be disabled for low contention scenarios
  *
  * 特性：
  * - 编译时模式选择消除运行时分支
  * - 编译时级别过滤优化掉禁用的日志调用
  * - WFC 功能可在编译时完全禁用
+ * - 影子 tail 优化可在低竞争场景下禁用
  */
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 class Logger {
 public:
     // =========================================================================
@@ -129,6 +135,9 @@ public:
     
     /// WFC functionality enabled / WFC 功能启用
     static constexpr bool kEnableWFC = EnableWFC;
+    
+    /// Shadow tail optimization enabled / 影子 tail 优化启用
+    static constexpr bool kEnableShadowTail = EnableShadowTail;
 
     // =========================================================================
     // Constructors and Destructor / 构造函数和析构函数
@@ -533,6 +542,7 @@ public:
     static constexpr Mode GetMode() { return kMode; }
     static constexpr Level GetMinLevel() { return kMinLevel; }
     static constexpr bool IsWFCEnabled() { return kEnableWFC; }
+    static constexpr bool IsShadowTailEnabled() { return kEnableShadowTail; }
 
     // =========================================================================
     // Flush / 刷新
@@ -577,11 +587,11 @@ private:
         }
         else if constexpr (M == Mode::Async) {
             // Async mode: create heap ring buffer and writer thread
-            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC>>(
+            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>>(
                 config.heapRingBufferSize, config.queueFullPolicy);
             
             if (!m_sinks.empty()) {
-                m_writerThread = std::make_unique<WriterThread<EnableWFC>>(m_sinks[0]);
+                m_writerThread = std::make_unique<WriterThread<EnableWFC, EnableShadowTail>>(m_sinks[0]);
                 m_writerThread->SetHeapRingBuffer(m_heapRingBuffer.get());
                 m_writerThread->SetPollInterval(config.pollInterval);
                 m_writerThread->SetPollTimeout(config.pollTimeout);
@@ -594,24 +604,24 @@ private:
         else if constexpr (M == Mode::MProc) {
             // Multi-process mode
             if (!config.sharedMemoryName.empty()) {
-                m_sharedMemory = SharedMemory<EnableWFC>::Create(
+                m_sharedMemory = SharedMemory<EnableWFC, EnableShadowTail>::Create(
                     config.sharedMemoryName,
                     config.sharedRingBufferSize,
                     config.queueFullPolicy);
             }
 
-            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC>>(
+            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>>(
                 config.heapRingBufferSize, config.queueFullPolicy);
 
             if (m_sharedMemory) {
-                m_pipelineThread = std::make_unique<PipelineThread<EnableWFC>>(
+                m_pipelineThread = std::make_unique<PipelineThread<EnableWFC, EnableShadowTail>>(
                     *m_heapRingBuffer, *m_sharedMemory);
                 m_pipelineThread->SetPollInterval(config.pollInterval);
                 m_pipelineThread->SetPollTimeout(config.pollTimeout);
                 m_pipelineThread->Start();
 
                 if (!m_sinks.empty()) {
-                    m_writerThread = std::make_unique<WriterThread<EnableWFC>>(m_sinks[0]);
+                    m_writerThread = std::make_unique<WriterThread<EnableWFC, EnableShadowTail>>(m_sinks[0]);
                     m_writerThread->SetSharedRingBuffer(m_sharedMemory->GetRingBuffer());
                     m_writerThread->SetPollInterval(config.pollInterval);
                     m_writerThread->SetPollTimeout(config.pollTimeout);
@@ -870,24 +880,24 @@ private:
     std::vector<std::shared_ptr<Sink>> m_sinks;
     std::shared_ptr<Format> m_format;
 
-    std::unique_ptr<HeapRingBuffer<LogEntry, EnableWFC>> m_heapRingBuffer;
-    std::unique_ptr<SharedMemory<EnableWFC>> m_sharedMemory;
-    std::unique_ptr<PipelineThread<EnableWFC>> m_pipelineThread;
-    std::unique_ptr<WriterThread<EnableWFC>> m_writerThread;
+    std::unique_ptr<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>> m_heapRingBuffer;
+    std::unique_ptr<SharedMemory<EnableWFC, EnableShadowTail>> m_sharedMemory;
+    std::unique_ptr<PipelineThread<EnableWFC, EnableShadowTail>> m_pipelineThread;
+    std::unique_ptr<WriterThread<EnableWFC, EnableShadowTail>> m_writerThread;
 };
 
 // ==============================================================================
 // Type Aliases / 类型别名
 // ==============================================================================
 
-template<Level L = kDefaultLevel, bool EnableWFC = false>
-using SyncLogger = Logger<Mode::Sync, L, EnableWFC>;
+template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+using SyncLogger = Logger<Mode::Sync, L, EnableWFC, EnableShadowTail>;
 
-template<Level L = kDefaultLevel, bool EnableWFC = false>
-using AsyncLogger = Logger<Mode::Async, L, EnableWFC>;
+template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+using AsyncLogger = Logger<Mode::Async, L, EnableWFC, EnableShadowTail>;
 
-template<Level L = kDefaultLevel, bool EnableWFC = false>
-using MProcLogger = Logger<Mode::MProc, L, EnableWFC>;
+template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+using MProcLogger = Logger<Mode::MProc, L, EnableWFC, EnableShadowTail>;
 
 using DebugLogger = Logger<Mode::Async, Level::Debug, false>;
 using ReleaseLogger = Logger<Mode::Async, Level::Info, false>;
@@ -900,13 +910,13 @@ using ReleaseLoggerWFC = Logger<Mode::Async, Level::Info, true>;
 
 namespace detail {
 
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
-inline std::shared_ptr<Logger<M, L, EnableWFC>>& GetDefaultLoggerPtr() {
-    static std::shared_ptr<Logger<M, L, EnableWFC>> defaultLogger;
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>>& GetDefaultLoggerPtr() {
+    static std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> defaultLogger;
     return defaultLogger;
 }
 
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline std::mutex& GetDefaultLoggerMutex() {
     static std::mutex mutex;
     return mutex;
@@ -914,16 +924,16 @@ inline std::mutex& GetDefaultLoggerMutex() {
 
 }  // namespace detail
 
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
-inline std::shared_ptr<Logger<M, L, EnableWFC>> DefaultLogger() {
-    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC>());
-    return detail::GetDefaultLoggerPtr<M, L, EnableWFC>();
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> DefaultLogger() {
+    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
+    return detail::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>();
 }
 
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
-inline void SetDefaultLogger(std::shared_ptr<Logger<M, L, EnableWFC>> logger) {
-    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC>());
-    detail::GetDefaultLoggerPtr<M, L, EnableWFC>() = std::move(logger);
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
+inline void SetDefaultLogger(std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> logger) {
+    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
+    detail::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>() = std::move(logger);
 }
 
 // ==============================================================================
@@ -966,7 +976,11 @@ inline void SetDefaultLogger(std::shared_ptr<Logger<M, L, EnableWFC>> logger) {
 #define ONEPLOG_DEFAULT_ENABLE_WFC false
 #endif
 
-using DefaultLoggerType = Logger<ONEPLOG_DEFAULT_MODE, ONEPLOG_DEFAULT_LEVEL, ONEPLOG_DEFAULT_ENABLE_WFC>;
+#ifndef ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL
+#define ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL true
+#endif
+
+using DefaultLoggerType = Logger<ONEPLOG_DEFAULT_MODE, ONEPLOG_DEFAULT_LEVEL, ONEPLOG_DEFAULT_ENABLE_WFC, ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL>;
 
 // ==============================================================================
 // Global Logger Storage / 全局日志器存储
@@ -996,22 +1010,22 @@ inline std::mutex& GetGlobalLoggerMutex() {
 
 // Legacy template-based functions (for backward compatibility)
 // 旧版模板函数（向后兼容）
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline void InitLogger(const LoggerConfig& config = LoggerConfig{}) {
-    auto logger = std::make_shared<Logger<M, L, EnableWFC>>();
+    auto logger = std::make_shared<Logger<M, L, EnableWFC, EnableShadowTail>>();
     logger->SetSink(std::make_shared<ConsoleSink>());
     logger->SetFormat(std::make_shared<ConsoleFormat>());
     logger->Init(config);
-    SetDefaultLogger<M, L, EnableWFC>(logger);
+    SetDefaultLogger<M, L, EnableWFC, EnableShadowTail>(logger);
 }
 
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline void ShutdownLogger() {
-    auto logger = DefaultLogger<M, L, EnableWFC>();
+    auto logger = DefaultLogger<M, L, EnableWFC, EnableShadowTail>();
     if (logger) {
         logger->Shutdown();
     }
-    SetDefaultLogger<M, L, EnableWFC>(nullptr);
+    SetDefaultLogger<M, L, EnableWFC, EnableShadowTail>(nullptr);
 }
 
 // ==============================================================================

@@ -22,12 +22,19 @@
  *          进程名为全局常量，模块名为线程局部变量
  *          消费者进程需要共享内存中的 PID/TID-名称对照表
  *
+ * Platform-specific optimizations / 平台特定优化：
+ * - Linux: Uses DirectMappingTable with O(1) lookup using TID as array index
+ * - Non-Linux (macOS/Windows): Uses ArrayMappingTable with O(n) linear search
+ *
  * @copyright Copyright (c) 2024 onePlog
+ *
+ * _Requirements: 7.1, 7.2, 7.3, 7.4_
  */
 
 #pragma once
 
 #include "oneplog/common.hpp"
+#include "oneplog/internal/platform_lookup_table.hpp"
 
 #include <atomic>
 #include <cstring>
@@ -43,6 +50,37 @@
 #endif
 
 namespace oneplog {
+
+// ==============================================================================
+// Compile-time Configuration / 编译期配置
+// ==============================================================================
+
+/**
+ * @brief Configuration options for name manager
+ * @brief 名称管理器的配置选项
+ *
+ * Users can customize these values by defining them before including this header.
+ * 用户可以在包含此头文件之前定义这些值来自定义。
+ */
+namespace config {
+
+/// Maximum name length (default: 31 for backward compatibility)
+/// 最大名称长度（默认：31，用于向后兼容）
+#ifndef ONEPLOG_MAX_NAME_LENGTH
+inline constexpr size_t kMaxNameLength = 31;
+#else
+inline constexpr size_t kMaxNameLength = ONEPLOG_MAX_NAME_LENGTH;
+#endif
+
+/// Use optimized lookup table (default: true)
+/// 使用优化的查找表（默认：true）
+#ifndef ONEPLOG_USE_OPTIMIZED_LOOKUP
+inline constexpr bool kUseOptimizedLookup = true;
+#else
+inline constexpr bool kUseOptimizedLookup = ONEPLOG_USE_OPTIMIZED_LOOKUP;
+#endif
+
+}  // namespace config
 
 // ==============================================================================
 // Global Process Name / 全局进程名
@@ -67,12 +105,11 @@ inline std::string& GetGlobalProcessName() {
 /**
  * @brief Set global process name (call once at startup)
  * @brief 设置全局进程名（启动时调用一次）
- * @note Name is truncated to 31 characters / 名称会被截断到 31 字符
+ * @note Name is truncated to kMaxNameLength characters / 名称会被截断到 kMaxNameLength 字符
  */
 inline void SetProcessName(const std::string& name) {
-    constexpr size_t kMaxNameLength = 31;
-    if (name.length() > kMaxNameLength) {
-        detail::GetGlobalProcessName() = name.substr(0, kMaxNameLength);
+    if (name.length() > config::kMaxNameLength) {
+        detail::GetGlobalProcessName() = name.substr(0, config::kMaxNameLength);
     } else {
         detail::GetGlobalProcessName() = name;
     }
@@ -102,7 +139,9 @@ inline uint32_t GetCurrentThreadIdInternal() {
     pthread_threadid_np(nullptr, &tid);
     return static_cast<uint32_t>(tid);
 #else
-    return static_cast<uint32_t>(pthread_self());
+    // Linux: use gettid() for actual thread ID (optimized for DirectMappingTable)
+    // Linux：使用 gettid() 获取实际线程 ID（为 DirectMappingTable 优化）
+    return static_cast<uint32_t>(gettid());
 #endif
 }
 
@@ -129,12 +168,11 @@ inline void RegisterModuleName();
  *
  * In Async/MProc mode, this automatically registers to the global table.
  * 在 Async/MProc 模式下，会自动注册到全局表。
- * @note Name is truncated to 31 characters / 名称会被截断到 31 字符
+ * @note Name is truncated to kMaxNameLength characters / 名称会被截断到 kMaxNameLength 字符
  */
 inline void SetModuleName(const std::string& name) {
-    constexpr size_t kMaxNameLength = 31;
-    if (name.length() > kMaxNameLength) {
-        detail::tls_moduleName = name.substr(0, kMaxNameLength);
+    if (name.length() > config::kMaxNameLength) {
+        detail::tls_moduleName = name.substr(0, config::kMaxNameLength);
     } else {
         detail::tls_moduleName = name;
     }
@@ -174,18 +212,35 @@ inline void SetAutoRegisterModuleName(bool enable) {
  * @brief Thread-safe TID to module name mapping table for Async mode
  * @brief 用于 Async 模式的线程安全 TID 到模块名映射表
  *
+ * This class now uses platform-specific optimized lookup tables:
+ * - Linux: DirectMappingTable with O(1) lookup using TID as array index
+ * - Non-Linux: ArrayMappingTable with O(n) linear search
+ *
+ * 此类现在使用平台特定的优化查找表：
+ * - Linux：使用 TID 作为数组索引的 O(1) 查找 DirectMappingTable
+ * - 非 Linux：O(n) 线性搜索的 ArrayMappingTable
+ *
  * In Async mode, WriterThread cannot access thread_local variables of other threads.
  * This table allows WriterThread to lookup module name by TID.
  *
  * 在异步模式下，WriterThread 无法访问其他线程的 thread_local 变量。
  * 此表允许 WriterThread 通过 TID 查找模块名。
+ *
+ * _Requirements: 7.1, 7.2, 7.3, 7.4_
  */
 class ThreadModuleTable {
 public:
+    /// Maximum number of entries (for ArrayMappingTable on non-Linux)
+    /// 最大条目数（用于非 Linux 上的 ArrayMappingTable）
     static constexpr size_t kMaxEntries = 256;
-    static constexpr size_t kMaxNameLength = 31;
+    
+    /// Maximum name length / 最大名称长度
+    static constexpr size_t kMaxNameLength = config::kMaxNameLength;
 
-    ThreadModuleTable() { Clear(); }
+    /// Platform information / 平台信息
+    static constexpr bool kIsLinuxPlatform = internal::kIsLinuxPlatform;
+
+    ThreadModuleTable() = default;
     ~ThreadModuleTable() = default;
 
     ThreadModuleTable(const ThreadModuleTable&) = delete;
@@ -196,72 +251,89 @@ public:
     /**
      * @brief Register or update module name for a thread
      * @brief 注册或更新线程的模块名
+     *
+     * Uses platform-specific optimized lookup table.
+     * 使用平台特定的优化查找表。
+     *
+     * @param threadId Thread ID / 线程 ID
+     * @param name Module name / 模块名
+     * @return true if successful, false if table full (non-Linux) or TID out of range (Linux)
+     *         成功返回 true，表满（非 Linux）或 TID 超出范围（Linux）返回 false
      */
     bool Register(uint32_t threadId, const std::string& name) {
-        // First, try to find existing entry
-        size_t count = m_count.load(std::memory_order_acquire);
-        for (size_t i = 0; i < count && i < kMaxEntries; ++i) {
-            if (m_entries[i].valid.load(std::memory_order_acquire) &&
-                m_entries[i].threadId.load(std::memory_order_acquire) == threadId) {
-                CopyName(m_entries[i].name, name);
-                return true;
-            }
-        }
-
-        // Add new entry
-        size_t newIndex = m_count.fetch_add(1, std::memory_order_acq_rel);
-        if (newIndex >= kMaxEntries) {
-            m_count.fetch_sub(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        m_entries[newIndex].threadId.store(threadId, std::memory_order_relaxed);
-        CopyName(m_entries[newIndex].name, name);
-        m_entries[newIndex].valid.store(true, std::memory_order_release);
-        return true;
+        return m_table.Register(threadId, std::string_view(name));
     }
 
     /**
      * @brief Get module name by thread ID
      * @brief 通过线程 ID 获取模块名
+     *
+     * Uses platform-specific optimized lookup:
+     * - Linux: O(1) direct mapping
+     * - Non-Linux: O(n) linear search
+     *
+     * 使用平台特定的优化查找：
+     * - Linux：O(1) 直接映射
+     * - 非 Linux：O(n) 线性搜索
+     *
+     * @param threadId Thread ID / 线程 ID
+     * @return Module name or empty string if not found / 模块名，未找到返回空字符串
      */
     std::string GetName(uint32_t threadId) const {
-        size_t count = m_count.load(std::memory_order_acquire);
-        for (size_t i = 0; i < count && i < kMaxEntries; ++i) {
-            if (m_entries[i].valid.load(std::memory_order_acquire) &&
-                m_entries[i].threadId.load(std::memory_order_acquire) == threadId) {
-                return std::string(m_entries[i].name);
+        std::string_view name = m_table.GetName(threadId);
+        // Return empty string if default name is returned (for backward compatibility)
+        // 如果返回默认名称则返回空字符串（用于向后兼容）
+        if (name == "main") {
+            // Check if this TID is actually registered
+            // 检查此 TID 是否实际已注册
+            if (!m_table.IsRegistered(threadId)) {
+                return "";
             }
         }
-        return "";
+        return std::string(name);
     }
 
+    /**
+     * @brief Clear all entries
+     * @brief 清空所有条目
+     */
     void Clear() {
-        for (size_t i = 0; i < kMaxEntries; ++i) {
-            m_entries[i].valid.store(false, std::memory_order_relaxed);
-            m_entries[i].threadId.store(0, std::memory_order_relaxed);
-            std::memset(m_entries[i].name, 0, kMaxNameLength + 1);
-        }
-        m_count.store(0, std::memory_order_release);
+        m_table.Clear();
     }
 
-    size_t Count() const { return m_count.load(std::memory_order_acquire); }
+    /**
+     * @brief Get number of registered entries
+     * @brief 获取已注册条目数
+     */
+    size_t Count() const {
+        return m_table.Count();
+    }
+
+    /**
+     * @brief Get lookup complexity description
+     * @brief 获取查找复杂度描述
+     *
+     * @return "O(1)" on Linux, "O(n)" on other platforms
+     *         Linux 上返回 "O(1)"，其他平台返回 "O(n)"
+     */
+    static constexpr const char* GetLookupComplexity() noexcept {
+        return internal::GetLookupComplexity();
+    }
+
+    /**
+     * @brief Get platform name
+     * @brief 获取平台名称
+     *
+     * @return "Linux" on Linux, "Non-Linux" on other platforms
+     *         Linux 上返回 "Linux"，其他平台返回 "Non-Linux"
+     */
+    static constexpr const char* GetPlatformName() noexcept {
+        return internal::GetPlatformName();
+    }
 
 private:
-    static void CopyName(char* dest, const std::string& src) {
-        size_t len = std::min(src.length(), kMaxNameLength);
-        std::memcpy(dest, src.c_str(), len);
-        dest[len] = '\0';
-    }
-
-    struct Entry {
-        std::atomic<uint32_t> threadId{0};
-        char name[kMaxNameLength + 1]{0};
-        std::atomic<bool> valid{false};
-    };
-
-    alignas(64) Entry m_entries[kMaxEntries];
-    std::atomic<size_t> m_count{0};
+    /// Platform-specific lookup table / 平台特定查找表
+    internal::ExtendedPlatformLookupTable m_table;
 };
 
 // ==============================================================================
@@ -331,11 +403,13 @@ inline std::string LookupModuleName(uint32_t threadId) {
  * 为三种模式提供统一接口。
  *
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
+ *
+ * _Requirements: 7.1, 7.2, 7.3, 7.4_
  */
 template<bool EnableWFC = false>
 class NameManager {
 public:
-    static constexpr size_t kMaxNameLength = 31;
+    static constexpr size_t kMaxNameLength = config::kMaxNameLength;
 
     // =========================================================================
     // Process Name (Global) / 进程名（全局）
@@ -417,6 +491,26 @@ public:
 
     static bool IsInitialized() { return s_initialized; }
     static Mode GetMode() { return s_mode; }
+
+    // =========================================================================
+    // Platform Information / 平台信息
+    // =========================================================================
+
+    /**
+     * @brief Check if running on Linux platform
+     * @brief 检查是否在 Linux 平台上运行
+     */
+    static constexpr bool IsLinuxPlatform() noexcept {
+        return internal::kIsLinuxPlatform;
+    }
+
+    /**
+     * @brief Get lookup complexity description
+     * @brief 获取查找复杂度描述
+     */
+    static constexpr const char* GetLookupComplexity() noexcept {
+        return internal::GetLookupComplexity();
+    }
 
 private:
     NameManager() = delete;

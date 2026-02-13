@@ -125,8 +125,30 @@ example_target("benchmark_array_mapping", "benchmark_array_mapping.cpp")
 -- OptimizedNameManager benchmark / OptimizedNameManager 基准测试
 example_target("benchmark_optimized_name_manager", "benchmark_optimized_name_manager.cpp")
 
+-- Shadow tail optimization benchmark / Shadow tail 优化基准测试
+example_target("benchmark_shadow_tail", "benchmark_shadow_tail.cpp")
+
 -- ==============================================================================
 -- spdlog comparison benchmark (optional)
+-- spdlog 对比测试（可选）
+-- ==============================================================================
+
+-- High contention comparison benchmark / 高竞争场景对比测试
+target("benchmark_contention_compare")
+    set_kind("binary")
+    add_files("benchmark_contention_compare.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+    if has_package("spdlog") then
+        add_packages("spdlog")
+        add_defines("HAS_SPDLOG")
+    end
+target_end()
+
+-- ==============================================================================
+-- spdlog comparison benchmark (optional) - original
 -- spdlog 对比测试（可选）
 -- ==============================================================================
 add_requires("spdlog", {system = false, configs = {header_only = true, fmt_external = false}, optional = true})

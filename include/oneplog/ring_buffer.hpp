@@ -211,10 +211,31 @@ using SharedSlotStatus = SlotStatus;
  *
  * This structure is placed at the beginning of shared memory.
  * All atomic variables are cache-line aligned to prevent false sharing.
+ *
+ * Shadow Tail Optimization / 影子 Tail 优化:
+ * - shadowTail is updated by consumer every kShadowTailUpdateInterval (32) pops
+ * - Producers read shadowTail instead of tail to reduce cache coherency traffic
+ * - This reduces the frequency of cross-core cache line transfers
+ *
+ * - shadowTail 由消费者每 kShadowTailUpdateInterval (32) 次消费更新一次
+ * - 生产者读取 shadowTail 而非 tail，减少缓存一致性流量
+ * - 这减少了跨核缓存行传输的频率
  */
 struct alignas(kCacheLineSize) RingBufferHeader {
+    /// Shadow tail update interval (consumer updates shadowTail every N pops)
+    /// 影子 tail 更新间隔（消费者每 N 次消费更新一次 shadowTail）
+    static constexpr size_t kShadowTailUpdateInterval = 32;
+
     alignas(kCacheLineSize) std::atomic<size_t> head{0};
+    
+    /// Real tail - only updated by consumer, rarely read by producer
+    /// 真实 tail - 仅由消费者更新，生产者很少读取
     alignas(kCacheLineSize) std::atomic<size_t> tail{0};
+    
+    /// Shadow tail - updated every kShadowTailUpdateInterval pops, frequently read by producers
+    /// 影子 tail - 每 kShadowTailUpdateInterval 次消费更新，生产者频繁读取
+    alignas(kCacheLineSize) std::atomic<size_t> shadowTail{0};
+    
     alignas(kCacheLineSize) std::atomic<ConsumerState> consumerState{ConsumerState::Active};
     alignas(kCacheLineSize) std::atomic<uint64_t> droppedCount{0};
 
@@ -229,6 +250,7 @@ struct alignas(kCacheLineSize) RingBufferHeader {
     void Init(size_t cap, QueueFullPolicy pol) noexcept {
         head.store(0, std::memory_order_relaxed);
         tail.store(0, std::memory_order_relaxed);
+        shadowTail.store(0, std::memory_order_relaxed);
         consumerState.store(ConsumerState::Active, std::memory_order_relaxed);
         droppedCount.store(0, std::memory_order_relaxed);
         capacity = cap;
@@ -245,18 +267,54 @@ struct alignas(kCacheLineSize) RingBufferHeader {
 // ==============================================================================
 
 /**
+ * @brief Producer local cache for shadow tail optimization
+ * @brief 生产者本地缓存，用于影子 tail 优化
+ *
+ * Each producer thread maintains a local cache of the shadow tail to minimize
+ * cross-core cache line reads. The cache includes a skip counter for batch
+ * dropping in DropNewest mode when the queue is persistently full.
+ *
+ * 每个生产者线程维护一个影子 tail 的本地缓存，以最小化跨核缓存行读取。
+ * 缓存包含一个跳过计数器，用于在队列持续满时批量丢弃（DropNewest 模式）。
+ */
+struct ProducerLocalCache {
+    size_t cachedShadowTail{0};  ///< Cached shadow tail value / 缓存的影子 tail 值
+    size_t skipCount{0};         ///< Remaining logs to skip in drop mode / 丢弃模式下剩余跳过的日志数
+    
+    /// Number of logs to skip when queue is persistently full
+    /// 队列持续满时跳过的日志数
+    static constexpr size_t kSkipCountOnPersistentFull = 31;
+};
+
+/**
  * @brief Ring buffer base class with full implementation
  * @brief 环形队列基类（包含完整实现）
  *
  * HeapRingBuffer and SharedRingBuffer inherit from this class.
  * The main difference is storage location (heap vs shared memory).
  *
+ * Shadow Tail Optimization / 影子 Tail 优化:
+ * - Producer first checks thread-local cached shadow tail (no cross-core read)
+ * - If queue appears full, reads shadow tail from ring buffer header
+ * - If still full and shadow tail unchanged, enters batch skip mode (DropNewest)
+ *   or exponential backoff (Block mode)
+ *
+ * - 生产者首先检查线程本地缓存的影子 tail（无跨核读取）
+ * - 如果队列看起来满了，从环形缓冲区头部读取影子 tail
+ * - 如果仍然满且影子 tail 未变，进入批量跳过模式（DropNewest）
+ *   或指数退避（Block 模式）
+ *
  * @tparam T The element type to store / 要存储的元素类型
  * @tparam EnableWFC Enable WFC (Wait For Completion) support / 启用 WFC 支持
  *                   When false, WFC checks are completely eliminated at compile time.
  *                   当为 false 时，WFC 检查在编译时完全消除。
+ * @tparam EnableShadowTail Enable shadow tail optimization / 启用影子 tail 优化
+ *                          When true (default), uses shadow tail for reduced cache coherency traffic.
+ *                          When false, uses original algorithm with real tail (better for low contention).
+ *                          当为 true（默认），使用影子 tail 减少缓存一致性流量。
+ *                          当为 false，使用原始算法和真实 tail（适合低竞争场景）。
  */
-template <typename T, bool EnableWFC = true>
+template <typename T, bool EnableWFC = true, bool EnableShadowTail = true>
 class RingBufferBase {
    public:
     static constexpr int64_t kInvalidSlot = -1;
@@ -296,8 +354,25 @@ class RingBufferBase {
     // =========================================================================
 
     /**
+     * @brief Get thread-local producer cache
+     * @brief 获取线程本地生产者缓存
+     */
+    static ProducerLocalCache& GetProducerCache() noexcept {
+        thread_local ProducerLocalCache cache;
+        return cache;
+    }
+
+    /**
      * @brief Acquire a slot for writing
      * @brief 获取一个用于写入的槽位
+     *
+     * When EnableShadowTail is true:
+     * - Uses shadow tail optimization for reduced cache coherency traffic
+     * - Better for high contention scenarios
+     *
+     * When EnableShadowTail is false:
+     * - Uses original algorithm with real tail
+     * - Better for low contention scenarios (lower overhead)
      *
      * @param isWFC If true, always block when full (WFC logs never dropped)
      */
@@ -306,16 +381,40 @@ class RingBufferBase {
             return kInvalidSlot;
         }
 
+        // When shadow tail is disabled, always use the original algorithm
+        // 当禁用影子 tail 时，始终使用原始算法
+        if constexpr (!EnableShadowTail) {
+            return AcquireSlotSmallQueue(isWFC);
+        } else {
+            size_t capacity = m_header->capacity;
+            
+            // For small queues, use the original algorithm with real tail
+            // 对于小队列，使用原始算法和真实 tail
+            if (capacity <= RingBufferHeader::kShadowTailUpdateInterval) {
+                return AcquireSlotSmallQueue(isWFC);
+            }
+
+            // For larger queues, use shadow tail optimization
+            // 对于较大队列，使用影子 tail 优化
+            return AcquireSlotWithShadowTail(isWFC);
+        }
+    }
+
+private:
+    /**
+     * @brief Acquire slot for small queues (uses real tail)
+     * @brief 为小队列获取槽位（使用真实 tail）
+     */
+    int64_t AcquireSlotSmallQueue(bool isWFC) noexcept {
         size_t head = m_header->head.load(std::memory_order_relaxed);
         size_t capacity = m_header->capacity;
         int spinCount = 0;
 
         while (true) {
-            // Only need acquire to see tail updates from consumer
             size_t tail = m_header->tail.load(std::memory_order_acquire);
 
             if (head - tail >= capacity) {
-                // WFC logs NEVER get dropped (only when EnableWFC is true)
+                // WFC logs NEVER get dropped
                 if constexpr (EnableWFC) {
                     if (isWFC) {
                         spinCount = SpinWait(spinCount);
@@ -331,7 +430,6 @@ class RingBufferBase {
 
                     case QueueFullPolicy::DropOldest: {
                         size_t oldestSlot = tail % capacity;
-                        // WFC check only when EnableWFC is true
                         if constexpr (EnableWFC) {
                             if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
                                 spinCount = SpinWait(spinCount);
@@ -355,9 +453,8 @@ class RingBufferBase {
                 }
             }
 
-            // Use release on success to ensure slot data is visible before head update
-            // Use relaxed on failure since we'll retry anyway
-            if (m_header->head.compare_exchange_weak(head, head + 1, std::memory_order_release,
+            if (m_header->head.compare_exchange_weak(head, head + 1, 
+                                                     std::memory_order_release,
                                                      std::memory_order_relaxed)) {
                 size_t slot = head % capacity;
                 int slotSpinCount = 0;
@@ -368,6 +465,135 @@ class RingBufferBase {
             }
         }
     }
+
+    /**
+     * @brief Acquire slot with shadow tail optimization (for larger queues)
+     * @brief 使用影子 tail 优化获取槽位（用于较大队列）
+     */
+    int64_t AcquireSlotWithShadowTail(bool isWFC) noexcept {
+        ProducerLocalCache& cache = GetProducerCache();
+        size_t capacity = m_header->capacity;
+
+        // Fast path: Check if we should skip this log (batch drop mode)
+        // 快速路径：检查是否应该跳过此日志（批量丢弃模式）
+        if (cache.skipCount > 0) {
+            --cache.skipCount;
+            m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
+            return kInvalidSlot;
+        }
+
+        size_t head = m_header->head.load(std::memory_order_relaxed);
+        int spinCount = 0;
+
+        while (true) {
+            // Step 1: Check with cached shadow tail (no cross-core read)
+            // 步骤 1：使用缓存的影子 tail 检查（无跨核读取）
+            if (head - cache.cachedShadowTail < capacity) {
+                // Queue not full according to cache, try to acquire slot
+                // 根据缓存队列未满，尝试获取槽位
+                if (m_header->head.compare_exchange_weak(head, head + 1, 
+                                                         std::memory_order_release,
+                                                         std::memory_order_relaxed)) {
+                    size_t slot = head % capacity;
+                    int slotSpinCount = 0;
+                    while (!m_slotStatus[slot].TryAcquire()) {
+                        slotSpinCount = SpinWait(slotSpinCount);
+                    }
+                    return static_cast<int64_t>(slot);
+                }
+                // CAS failed, retry with updated head
+                continue;
+            }
+
+            // Step 2: Cache shows full, read shadow tail from header
+            // 步骤 2：缓存显示满，从头部读取影子 tail
+            size_t newShadowTail = m_header->shadowTail.load(std::memory_order_acquire);
+            
+            // Check if queue is actually full with fresh shadow tail
+            // 使用新的影子 tail 检查队列是否真的满了
+            if (head - newShadowTail < capacity) {
+                // Queue has space now, update cache and retry
+                // 队列现在有空间，更新缓存并重试
+                cache.cachedShadowTail = newShadowTail;
+                continue;
+            }
+
+            // Step 3: Queue is really full, handle based on policy
+            // 步骤 3：队列确实满了，根据策略处理
+
+            // WFC logs NEVER get dropped (only when EnableWFC is true)
+            // WFC 日志永不丢弃（仅当 EnableWFC 为 true 时）
+            if constexpr (EnableWFC) {
+                if (isWFC) {
+                    spinCount = SpinWait(spinCount);
+                    head = m_header->head.load(std::memory_order_relaxed);
+                    // Periodically refresh shadow tail cache during spin
+                    // 自旋期间周期性刷新影子 tail 缓存
+                    if (spinCount % 100 == 0) {
+                        cache.cachedShadowTail = m_header->shadowTail.load(std::memory_order_acquire);
+                    }
+                    continue;
+                }
+            }
+
+            switch (m_header->policy) {
+                case QueueFullPolicy::DropNewest: {
+                    // Check if shadow tail is unchanged (queue persistently full)
+                    // 检查影子 tail 是否未变（队列持续满）
+                    if (newShadowTail == cache.cachedShadowTail) {
+                        // Shadow tail unchanged, enter batch skip mode
+                        // 影子 tail 未变，进入批量跳过模式
+                        cache.skipCount = ProducerLocalCache::kSkipCountOnPersistentFull;
+                    }
+                    // Update cache with new shadow tail
+                    cache.cachedShadowTail = newShadowTail;
+                    m_header->droppedCount.fetch_add(1, std::memory_order_relaxed);
+                    return kInvalidSlot;
+                }
+
+                case QueueFullPolicy::DropOldest: {
+                    // For DropOldest, we need to read real tail to drop oldest entry
+                    // 对于 DropOldest，需要读取真实 tail 来丢弃最旧条目
+                    size_t tail = m_header->tail.load(std::memory_order_acquire);
+                    size_t oldestSlot = tail % capacity;
+                    
+                    // WFC check only when EnableWFC is true
+                    if constexpr (EnableWFC) {
+                        if (m_slotStatus[oldestSlot].IsWFCEnabled()) {
+                            spinCount = SpinWait(spinCount);
+                            head = m_header->head.load(std::memory_order_relaxed);
+                            continue;
+                        }
+                    }
+                    if (DropOldestEntry()) {
+                        // Update cache after successful drop
+                        cache.cachedShadowTail = m_header->shadowTail.load(std::memory_order_relaxed);
+                        continue;
+                    }
+                    spinCount = SpinWait(spinCount);
+                    head = m_header->head.load(std::memory_order_relaxed);
+                    continue;
+                }
+
+                case QueueFullPolicy::Block:
+                default: {
+                    // Exponential backoff with periodic shadow tail refresh
+                    // 指数退避，周期性刷新影子 tail
+                    spinCount = SpinWait(spinCount);
+                    head = m_header->head.load(std::memory_order_relaxed);
+                    
+                    // Refresh shadow tail cache periodically during spin
+                    // 自旋期间周期性刷新影子 tail 缓存
+                    if (spinCount % 100 == 0) {
+                        cache.cachedShadowTail = m_header->shadowTail.load(std::memory_order_acquire);
+                    }
+                    continue;
+                }
+            }
+        }
+    }
+
+public:
 
     void CommitSlot(int64_t slot, T&& item) noexcept {
         if (!m_header || !m_buffer || slot < 0 || static_cast<size_t>(slot) >= m_header->capacity) {
@@ -444,6 +670,17 @@ class RingBufferBase {
     // Consumer Operations / 消费者操作
     // =========================================================================
 
+    /**
+     * @brief Try to pop an item from the queue
+     * @brief 尝试从队列弹出一个元素
+     *
+     * When EnableShadowTail is true:
+     * - Shadow tail is updated every kShadowTailUpdateInterval (32) pops
+     * - This reduces the frequency of writes that producers need to observe
+     *
+     * When EnableShadowTail is false:
+     * - Only real tail is updated (original behavior)
+     */
     bool TryPop(T& item) noexcept {
         if (!m_header || !m_buffer || !m_slotStatus) {
             return false;
@@ -472,8 +709,19 @@ class RingBufferBase {
             m_slotStatus[slot].CompleteRead();
         }
 
-        // Use release to ensure item read is complete before tail update
-        m_header->tail.store(tail + 1, std::memory_order_release);
+        // Update real tail
+        // 更新真实 tail
+        size_t newTail = tail + 1;
+        m_header->tail.store(newTail, std::memory_order_release);
+
+        // Update shadow tail only when EnableShadowTail is true
+        // 仅当 EnableShadowTail 为 true 时更新影子 tail
+        if constexpr (EnableShadowTail) {
+            if ((newTail % RingBufferHeader::kShadowTailUpdateInterval) == 0) {
+                m_header->shadowTail.store(newTail, std::memory_order_release);
+            }
+        }
+
         return true;
     }
 
@@ -551,18 +799,49 @@ class RingBufferBase {
         if (!m_header) {
             return false;
         }
-        size_t tail = m_header->tail.load(std::memory_order_acquire);
         size_t head = m_header->head.load(std::memory_order_acquire);
-        return head - tail >= m_header->capacity;
+        
+        // When shadow tail is disabled, always use real tail
+        // 当禁用影子 tail 时，始终使用真实 tail
+        if constexpr (!EnableShadowTail) {
+            size_t tail = m_header->tail.load(std::memory_order_acquire);
+            return head - tail >= m_header->capacity;
+        } else {
+            // For small queues (capacity <= shadow tail interval), use real tail for accuracy
+            // 对于小队列（容量 <= 影子 tail 间隔），使用真实 tail 以保证准确性
+            if (m_header->capacity <= RingBufferHeader::kShadowTailUpdateInterval) {
+                size_t tail = m_header->tail.load(std::memory_order_acquire);
+                return head - tail >= m_header->capacity;
+            }
+            // For larger queues, use shadow tail for approximate check
+            // 对于较大队列，使用影子 tail 进行近似检查
+            size_t shadowTail = m_header->shadowTail.load(std::memory_order_acquire);
+            return head - shadowTail >= m_header->capacity;
+        }
     }
 
     size_t Size() const noexcept {
         if (!m_header) {
             return 0;
         }
+        // Use real tail for accurate size
+        // 使用真实 tail 获取准确大小
         size_t tail = m_header->tail.load(std::memory_order_acquire);
         size_t head = m_header->head.load(std::memory_order_acquire);
         return (head > tail) ? (head - tail) : 0;
+    }
+
+    /**
+     * @brief Get approximate size using shadow tail (faster but less accurate)
+     * @brief 使用影子 tail 获取近似大小（更快但不太准确）
+     */
+    size_t ApproximateSize() const noexcept {
+        if (!m_header) {
+            return 0;
+        }
+        size_t shadowTail = m_header->shadowTail.load(std::memory_order_relaxed);
+        size_t head = m_header->head.load(std::memory_order_relaxed);
+        return (head > shadowTail) ? (head - shadowTail) : 0;
     }
 
     size_t Capacity() const noexcept { return m_header ? m_header->capacity : 0; }

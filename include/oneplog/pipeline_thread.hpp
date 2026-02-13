@@ -44,8 +44,9 @@ namespace oneplog {
  * Source → HeapRingBuffer → PipelineThread → SharedRingBuffer → WriterThread
  *
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
+ * @tparam EnableShadowTail Enable shadow tail optimization / 启用影子 tail 优化
  */
-template<bool EnableWFC = true>
+template<bool EnableWFC = true, bool EnableShadowTail = true>
 class PipelineThread {
 public:
     /**
@@ -55,7 +56,7 @@ public:
      * @param heapRingBuffer Reference to the heap ring buffer / 堆环形队列引用
      * @param sharedMemory Reference to the shared memory manager / 共享内存管理器引用
      */
-    PipelineThread(HeapRingBuffer<LogEntry, EnableWFC>& heapRingBuffer, SharedMemory<EnableWFC>& sharedMemory)
+    PipelineThread(HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>& heapRingBuffer, SharedMemory<EnableWFC, EnableShadowTail>& sharedMemory)
         : m_heapRingBuffer(heapRingBuffer)
         , m_sharedMemory(sharedMemory)
         , m_running(false)
@@ -250,8 +251,8 @@ private:
 #endif
     }
 
-    HeapRingBuffer<LogEntry, EnableWFC>& m_heapRingBuffer;  ///< Heap ring buffer reference / 堆环形队列引用
-    SharedMemory<EnableWFC>& m_sharedMemory;              ///< Shared memory reference / 共享内存引用
+    HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>& m_heapRingBuffer;  ///< Heap ring buffer reference / 堆环形队列引用
+    SharedMemory<EnableWFC, EnableShadowTail>& m_sharedMemory;              ///< Shared memory reference / 共享内存引用
     std::thread m_thread;                         ///< Worker thread / 工作线程
     std::atomic<bool> m_running;                  ///< Running flag / 运行标志
     std::chrono::microseconds m_pollInterval;     ///< Poll interval / 轮询间隔

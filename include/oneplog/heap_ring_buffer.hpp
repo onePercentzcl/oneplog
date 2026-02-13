@@ -25,11 +25,16 @@ namespace oneplog {
  *
  * @tparam T The element type to store / 要存储的元素类型
  * @tparam EnableWFC Enable WFC support / 启用 WFC 支持
+ * @tparam EnableShadowTail Enable shadow tail optimization / 启用影子 tail 优化
+ *                          Default is true for high contention scenarios.
+ *                          Set to false for low contention scenarios (lower overhead).
+ *                          默认为 true，适合高竞争场景。
+ *                          设为 false 适合低竞争场景（更低开销）。
  */
-template<typename T, bool EnableWFC = true>
-class HeapRingBuffer : public RingBufferBase<T, EnableWFC> {
+template<typename T, bool EnableWFC = true, bool EnableShadowTail = true>
+class HeapRingBuffer : public RingBufferBase<T, EnableWFC, EnableShadowTail> {
 public:
-    using Base = RingBufferBase<T, EnableWFC>;
+    using Base = RingBufferBase<T, EnableWFC, EnableShadowTail>;
 
     /**
      * @brief Construct a heap ring buffer
