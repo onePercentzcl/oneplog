@@ -34,6 +34,8 @@ set(TEST_SOURCES
     test_heap_ring_buffer.cpp
     test_name_manager.cpp
     test_direct_mapping_table.cpp
+    test_array_mapping_table.cpp
+    test_optimized_name_manager.cpp
 )
 
 # ==============================================================================

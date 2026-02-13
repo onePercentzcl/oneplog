@@ -116,6 +116,15 @@ example_target("benchmark_wfc_overhead", "benchmark_wfc_overhead.cpp")
 -- Name lookup benchmark / 名称查找基准测试
 example_target("benchmark_name_lookup", "benchmark_name_lookup.cpp")
 
+-- DirectMappingTable benchmark / DirectMappingTable 基准测试
+example_target("benchmark_direct_mapping", "benchmark_direct_mapping.cpp")
+
+-- ArrayMappingTable benchmark / ArrayMappingTable 基准测试
+example_target("benchmark_array_mapping", "benchmark_array_mapping.cpp")
+
+-- OptimizedNameManager benchmark / OptimizedNameManager 基准测试
+example_target("benchmark_optimized_name_manager", "benchmark_optimized_name_manager.cpp")
+
 -- ==============================================================================
 -- spdlog comparison benchmark (optional)
 -- spdlog 对比测试（可选）

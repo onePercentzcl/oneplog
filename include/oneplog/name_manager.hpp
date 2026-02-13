@@ -67,9 +67,15 @@ inline std::string& GetGlobalProcessName() {
 /**
  * @brief Set global process name (call once at startup)
  * @brief 设置全局进程名（启动时调用一次）
+ * @note Name is truncated to 31 characters / 名称会被截断到 31 字符
  */
 inline void SetProcessName(const std::string& name) {
-    detail::GetGlobalProcessName() = name;
+    constexpr size_t kMaxNameLength = 31;
+    if (name.length() > kMaxNameLength) {
+        detail::GetGlobalProcessName() = name.substr(0, kMaxNameLength);
+    } else {
+        detail::GetGlobalProcessName() = name;
+    }
 }
 
 /**
@@ -123,9 +129,15 @@ inline void RegisterModuleName();
  *
  * In Async/MProc mode, this automatically registers to the global table.
  * 在 Async/MProc 模式下，会自动注册到全局表。
+ * @note Name is truncated to 31 characters / 名称会被截断到 31 字符
  */
 inline void SetModuleName(const std::string& name) {
-    detail::tls_moduleName = name;
+    constexpr size_t kMaxNameLength = 31;
+    if (name.length() > kMaxNameLength) {
+        detail::tls_moduleName = name.substr(0, kMaxNameLength);
+    } else {
+        detail::tls_moduleName = name;
+    }
     
     // Auto-register to global table if enabled (Async/MProc mode)
     // 如果启用了自动注册（Async/MProc 模式），则自动注册到全局表

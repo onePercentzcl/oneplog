@@ -225,11 +225,11 @@ TEST_F(NameManagerTest, DefaultValues) {
 }
 
 /**
- * @brief Test name storage (no truncation at storage level)
- * @brief 测试名称存储（存储层不截断）
+ * @brief Test name storage with truncation
+ * @brief 测试名称存储（带截断）
  *
- * Note: Name truncation happens at format level, not at storage level.
- * 注意：名称截断发生在格式化层，而不是存储层。
+ * Names are truncated to kMaxNameLength (31) characters at storage level.
+ * 名称在存储层被截断到 kMaxNameLength（31）字符。
  */
 TEST_F(NameManagerTest, NameStorage) {
     NameManager<>::Initialize(Mode::Async);
@@ -238,8 +238,9 @@ TEST_F(NameManagerTest, NameStorage) {
     NameManager<>::SetProcessName(longName);
     
     std::string result = NameManager<>::GetProcessName();
-    EXPECT_EQ(result.length(), 50);  // Full name is stored / 完整名称被存储
-    EXPECT_EQ(result, longName);
+    // Name is truncated to 31 characters / 名称被截断到 31 字符
+    EXPECT_EQ(result.length(), 31);
+    EXPECT_EQ(result, longName.substr(0, 31));
 }
 
 /**
