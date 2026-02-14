@@ -22,12 +22,12 @@ namespace oneplog {
 // ==============================================================================
 
 // HeapRingBuffer with LogEntry
-template class HeapRingBuffer<LogEntry, true>;
-template class HeapRingBuffer<LogEntry, false>;
+template class internal::HeapRingBuffer<LogEntry, true>;
+template class internal::HeapRingBuffer<LogEntry, false>;
 
 // SharedRingBuffer with LogEntry
-template class SharedRingBuffer<LogEntry, true>;
-template class SharedRingBuffer<LogEntry, false>;
+template class internal::SharedRingBuffer<LogEntry, true>;
+template class internal::SharedRingBuffer<LogEntry, false>;
 
 // ==============================================================================
 // Thread classes instantiations / 线程类实例化
@@ -45,8 +45,8 @@ template class PipelineThread<false>;
 // SharedMemory instantiations / SharedMemory 实例化
 // ==============================================================================
 
-template class SharedMemory<true>;
-template class SharedMemory<false>;
+template class internal::SharedMemory<true>;
+template class internal::SharedMemory<false>;
 
 // ==============================================================================
 // Logger instantiations / Logger 实例化

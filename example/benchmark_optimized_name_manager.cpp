@@ -16,7 +16,7 @@
 #include "oneplog/benchmark/latency_collector.hpp"
 #include "oneplog/benchmark/performance_benchmark.hpp"
 #include "oneplog/name_manager.hpp"
-#include "oneplog/optimized_name_manager.hpp"
+#include "oneplog/internal/optimized_name_manager.hpp"
 #include "oneplog/oneplog.hpp"
 
 #include <atomic>

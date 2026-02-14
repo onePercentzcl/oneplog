@@ -12,6 +12,29 @@
 - **彩色输出**：Release 模式支持 ANSI 颜色
 - **fmt 库支持**：可选使用 fmt 库进行格式化
 
+## 项目结构
+
+```
+include/oneplog/
+├── oneplog.hpp          # 主头文件（包含此文件即可使用所有功能）
+├── common.hpp           # 核心类型定义（Level、Mode、ErrorCode 等）
+├── logger.hpp           # Logger 类和全局 API
+├── macros.hpp           # 日志宏定义
+├── name_manager.hpp     # 进程名/模块名管理
+├── sink.hpp             # Sink 基类（向后兼容）
+├── sinks/
+│   └── sink.hpp         # Sink 实现（ConsoleSink、FileSink 等）
+└── internal/            # 内部实现（不建议直接使用）
+    ├── binary_snapshot.hpp      # 参数捕获
+    ├── log_entry.hpp            # 日志条目
+    ├── heap_memory.hpp          # 堆内存环形队列
+    ├── shared_memory.hpp        # 共享内存管理
+    ├── format.hpp               # 格式化器
+    ├── writer_thread.hpp        # 写入线程
+    ├── pipeline_thread.hpp      # 管道线程（多进程模式）
+    └── ...
+```
+
 ## 快速开始
 
 ### 在其他项目中使用 oneplog
@@ -138,6 +161,7 @@ int main() {
 #define ONEPLOG_DEFAULT_MODE oneplog::Mode::Sync
 #define ONEPLOG_DEFAULT_LEVEL oneplog::Level::Debug
 #define ONEPLOG_DEFAULT_ENABLE_WFC true
+#define ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL false  // 低竞争场景可禁用
 #include <oneplog/oneplog.hpp>
 
 int main() {
@@ -301,9 +325,242 @@ onePlog 针对不同平台实现了优化的名称查找表：
 
 ## 运行模式
 
+onePlog 支持三种运行模式，每种模式有不同的数据流和控制流：
+
 - **同步模式 (Sync)**：日志直接在调用线程中输出，适合调试
 - **异步模式 (Async)**：日志通过无锁队列传递给后台线程，高性能
 - **多进程模式 (MProc)**：多个进程共享同一个日志输出
+
+### 同步模式 (Sync)
+
+同步模式下，日志在调用线程中直接格式化并输出，无后台线程。
+
+#### 数据流程图
+
+```mermaid
+flowchart LR
+    subgraph CallerThread["调用线程 (Caller Thread)"]
+        A["Log调用<br/>Info()"] --> B["直接格式化<br/>fmt::format"]
+        B --> C["Sink.Write()<br/>直接输出"]
+    end
+    
+    D["fmt字符串 + 参数"] --> E["格式化消息"] --> F["输出目标<br/>(控制台/文件)"]
+```
+
+> 注意: 同步模式不使用 BinarySnapshot，直接对参数进行格式化
+
+#### 控制流程图
+
+```mermaid
+flowchart TD
+    A["Logger.Info()"] --> B{"编译时级别检查<br/>if constexpr"}
+    B -->|级别不足| C["返回（零开销）"]
+    B -->|级别通过| D["获取时间戳<br/>GetNanosecond()"]
+    D --> E["ProcessEntry<br/>SyncDirect()"]
+    E --> F["获取线程/进程ID<br/>(可选)"]
+    F --> G["格式化消息<br/>Format.Format()"]
+    G --> H["写入所有 Sink<br/>Sink.Write()"]
+    H --> I["返回"]
+    
+    F -.- J["按需获取<br/>根据 Format.GetRequirements()<br/>编译时确定，不需要的字段直接跳过"]
+```
+
+#### 关键特性
+
+- **零后台线程**：无 WriterThread、无 PipelineThread
+- **零队列开销**：无 HeapRingBuffer、无 SharedRingBuffer
+- **直接格式化**：不使用 BinarySnapshot，直接调用 fmt::format
+- **栈缓冲区**：使用 `fmt::memory_buffer` 避免堆分配
+- **按需获取元数据**：根据 Format.GetRequirements() 决定是否获取 TID/PID 等
+- **适用场景**：调试、低吞吐量、需要即时输出
+
+---
+
+### 异步模式 (Async)
+
+异步模式下，调用线程将日志条目推入无锁队列，后台 WriterThread 负责格式化和输出。
+
+#### 数据流程图
+
+```mermaid
+flowchart LR
+    subgraph CallerThreads["调用线程 (多个)"]
+        A["Log调用<br/>Info()"] --> B["创建 LogEntry<br/>+ BinarySnapshot"]
+        B --> C["TryPush()<br/>推入无锁队列"]
+    end
+    
+    subgraph WriterThreadBox["WriterThread (单个)"]
+        D["TryPop()<br/>从队列读取"] --> E["格式化<br/>Format"]
+        E --> F["Sink.Write()<br/>输出"]
+    end
+    
+    C --> G["HeapRingBuffer<br/>(无锁环形队列)<br/>堆内存分配"]
+    G --> D
+```
+
+#### 控制流程图
+
+```mermaid
+flowchart TD
+    subgraph CallerThread["调用线程"]
+        A["Logger.Info()"] --> B{"编译时级别检查"}
+        B -->|级别不足| C["返回"]
+        B -->|级别通过| D["获取时间戳"]
+        D --> E["ProcessEntry<br/>Async()"]
+        E --> F["创建 LogEntry<br/>捕获参数到<br/>BinarySnapshot"]
+        F --> G["按需获取元数据<br/>TID/PID/源位置"]
+        G --> H["AcquireSlot()<br/>获取槽位"]
+        H --> I["队列满策略<br/>DropNewest/<br/>DropOldest/<br/>Block"]
+        H --> J["CommitSlot()<br/>提交日志条目"]
+        J --> K["NotifyConsumer<br/>IfWaiting()"]
+        K --> L["返回"]
+        
+        G -.- M["根据 Format.GetRequirements() 决定<br/>不需要的字段直接跳过，提升性能"]
+        K -.- N["仅当消费者等待时通知"]
+        L -.- O["调用线程立即返回，不等待输出"]
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph WriterThread["WriterThread"]
+        A["ThreadFunc()"] --> B["while(running)"]
+        B --> C["TryPop()<br/>尝试读取"]
+        C -->|有数据| D["ProcessEntry()<br/>格式化 + 输出"]
+        D --> E["继续 TryPop()"]
+        E -.- F["批量处理"]
+        C -->|无数据| G["WaitForData()<br/>1. 自旋等待<br/>2. 通知等待"]
+        G --> H["继续循环"]
+        
+        G -.- I["pollInterval (默认 1μs)"]
+        G -.- J["pollTimeout (默认 10ms)"]
+    end
+```
+
+#### 关键特性
+
+- **无锁队列**：HeapRingBuffer 使用 CAS 操作，高并发性能
+- **批量处理**：WriterThread 连续读取多条日志，减少上下文切换
+- **通知优化**：仅当消费者等待时才发送通知信号
+- **Shadow Tail**：生产者缓存 tail 位置，减少原子读取
+- **按需获取元数据**：生产者根据 Format.GetRequirements() 决定是否获取 TID/PID/源位置
+- **适用场景**：高吞吐量、低延迟要求、单进程多线程
+
+---
+
+### 多进程模式 (MProc)
+
+多进程模式下，多个生产者进程通过共享内存将日志传递给消费者进程。
+
+#### 数据流程图
+
+```mermaid
+flowchart TD
+    subgraph ProducerProcess["生产者进程 (多个)"]
+        subgraph CallerThreads["调用线程 (多个)"]
+            A["Log调用<br/>Info()"] --> B["创建 LogEntry<br/>+ BinarySnapshot"]
+            B --> C["TryPush()<br/>推入堆队列"]
+        end
+        
+        C --> D["HeapRingBuffer<br/>(进程内堆队列)"]
+        
+        subgraph PipelineThreadBox["PipelineThread"]
+            E["TryPop()<br/>从堆队列读取"] --> F["ConvertPointers<br/>指针转内联数据<br/>+ AddProcessId"]
+            F --> G["TryPush()<br/>推入共享队列"]
+        end
+        
+        D --> E
+    end
+    
+    G --> H["SharedRingBuffer<br/>(共享内存队列)"]
+    
+    subgraph SharedMemoryBox["SharedMemory"]
+        I["Metadata"]
+        J["Config"]
+        K["NameTable"]
+        L["RingBuffer"]
+    end
+    
+    H --> SharedMemoryBox
+    
+    subgraph ConsumerProcess["消费者进程 (单个)"]
+        subgraph WriterThreadBox["WriterThread"]
+            M["TryPop()<br/>从共享队列读取"] --> N["格式化<br/>Format"]
+            N --> O["Sink.Write()<br/>输出"]
+        end
+    end
+    
+    SharedMemoryBox --> M
+```
+
+#### 控制流程图
+
+```mermaid
+flowchart TD
+    subgraph ProducerCallerThread["生产者进程 - 调用线程"]
+        A["Logger.Info()"] --> B["ProcessEntry<br/>Async()"]
+        B -.- C["与异步模式相同"]
+        B --> D["HeapRingBuffer<br/>.TryPush()"]
+        D -.- E["推入进程内堆队列"]
+        D --> F["返回"]
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph PipelineThread["生产者进程 - PipelineThread"]
+        A["ThreadFunc()"] --> B["while(running)"]
+        B --> C["HeapRingBuffer<br/>.TryPop()"]
+        C -->|有数据| D["ProcessEntry()"]
+        D --> E["ConvertPointers<br/>ToData()"]
+        E -.- F["将指针数据转换为内联数据<br/>(跨进程传输必需)"]
+        E --> G["AddProcessId()<br/>(按需)"]
+        G -.- H["根据 Format.GetRequirements() 决定是否添加<br/>不需要进程 ID 时跳过，提升性能"]
+        G --> I["SharedRingBuffer<br/>.TryPush()"]
+        I -.- J["推入共享内存队列"]
+        I --> K["NotifyConsumer()"]
+        K -.- L["通知消费者进程"]
+    end
+```
+
+```mermaid
+flowchart TD
+    subgraph ConsumerWriterThread["消费者进程 - WriterThread"]
+        A["ThreadFunc()"] --> B["while(running)"]
+        B --> C["SharedRingBuffer<br/>.TryPop()"]
+        C -.- D["从共享内存队列读取"]
+        C -->|有数据| E["ProcessEntry()<br/>格式化 + 输出"]
+        C -->|无数据| F["WaitForData()"]
+        F -.- G["无数据时等待通知"]
+    end
+```
+
+#### 关键特性
+
+- **两级队列**：HeapRingBuffer (进程内) + SharedRingBuffer (跨进程)
+- **指针转换**：PipelineThread 将指针数据转换为内联数据
+- **按需添加进程ID**：PipelineThread 根据 Format.GetRequirements() 决定是否添加 PID
+- **共享内存结构**：
+  - `SharedMemoryMetadata`: 魔数、版本、偏移量
+  - `SharedLoggerConfig`: 日志级别配置
+  - `ProcessThreadNameTable`: 进程/线程名称映射表
+  - `SharedRingBuffer`: 日志条目队列
+- **进程隔离**：生产者进程崩溃不影响消费者进程
+- **适用场景**：多进程架构、微服务、需要集中日志收集
+
+---
+
+### 三种模式对比
+
+| 特性 | 同步模式 | 异步模式 | 多进程模式 |
+|------|----------|----------|------------|
+| 后台线程 | 无 | WriterThread | PipelineThread + WriterThread |
+| 队列 | 无 | HeapRingBuffer | HeapRingBuffer + SharedRingBuffer |
+| 内存 | 栈缓冲区 | 堆内存 | 堆内存 + 共享内存 |
+| 延迟 | 高（阻塞调用线程） | 低（立即返回） | 低（立即返回） |
+| 吞吐量 | 低 | 高 | 中等 |
+| 跨进程 | 否 | 否 | 是 |
+| 适用场景 | 调试、低吞吐量 | 高性能单进程 | 多进程架构 |
 
 ## 格式化器
 
@@ -526,7 +783,9 @@ target_compile_definitions(your_target PRIVATE ONEPLOG_ACTIVE_LEVEL=3)
 | `mproc_example` | Fork 多进程示例 |
 | `exec_example` | Exec 子进程示例 |
 | `wfc_example` | WFC（等待完成）示例 |
+| `multithread_example` | 多进程多线程示例 |
 | `benchmark` | 性能基准测试 |
+| `stress_test` | 压力测试 |
 
 运行示例：
 ```bash
@@ -535,8 +794,39 @@ xmake run async_example
 xmake run mproc_example
 xmake run exec_example
 xmake run wfc_example
+xmake run multithread_example
 xmake run benchmark
 ```
+
+### 压力测试
+
+压力测试程序用于测试 onePlog 在高负载下的性能和稳定性：
+
+```bash
+# 基本压力测试（8线程，每线程10万消息）
+xmake run stress_test
+
+# 自定义线程数和消息数
+xmake run stress_test -- -t 16 -m 500000
+
+# 持续时间模式（运行30秒）
+xmake run stress_test -- -t 8 -d 30
+
+# 延迟测试
+xmake run stress_test -- -l 100000
+
+# 突发测试
+xmake run stress_test -- -b 10000
+```
+
+压力测试选项：
+- `-t <threads>`: 线程数（默认 8）
+- `-m <messages>`: 每线程消息数（默认 100000）
+- `-d <seconds>`: 持续时间秒数（覆盖 -m）
+- `-l <iterations>`: 运行延迟测试
+- `-b <size>`: 运行突发测试
+- `-c`: 使用 ConsoleSink（默认使用 NullSink）
+- `-v`: 详细输出
 
 ## 性能测试
 
@@ -626,21 +916,23 @@ xmake -P . -m release
 - [x] 宏定义（ONEPLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL、WFC、条件日志、编译时禁用）
 - [x] MemoryPool 实现（无锁内存池、预分配、分配/释放）
 - [x] 示例代码（同步模式、异步模式、多进程模式、Exec 子进程、WFC）
+- [x] 目录结构重组（sinks/、internal/ 目录，内部实现移至 oneplog::internal 命名空间）
 
 ## 模板化日志器
 
-onePlog 使用模板化的 `Logger` 类，允许在编译时指定运行模式、最小日志级别和 WFC 功能，实现零开销抽象。
+onePlog 使用模板化的 `Logger` 类，允许在编译时指定运行模式、最小日志级别、WFC 功能和 Shadow Tail 优化，实现零开销抽象。
 
 ### 模板参数
 
 ```cpp
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false>
+template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 class Logger;
 ```
 
 - `M`: 运行模式（`Mode::Sync`、`Mode::Async`、`Mode::MProc`）
 - `L`: 编译时最小日志级别（低于此级别的日志调用被编译器优化掉）
 - `EnableWFC`: 是否启用 WFC（Wait For Completion）功能
+- `EnableShadowTail`: 是否启用 Shadow Tail 优化（默认启用，低竞争场景可禁用以降低开销）
 
 ### 类型别名
 

@@ -30,8 +30,8 @@
 #include <vector>
 
 #include "oneplog/logger.hpp"
-#include "oneplog/sink.hpp"
-#include "oneplog/format.hpp"
+#include "oneplog/sinks/sink.hpp"
+#include "oneplog/internal/format.hpp"
 
 using namespace oneplog;
 

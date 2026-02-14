@@ -13,33 +13,31 @@
 
 // Core types / 核心类型
 #include "oneplog/common.hpp"
-#include "oneplog/binary_snapshot.hpp"
-#include "oneplog/log_entry.hpp"
+#include "oneplog/internal/binary_snapshot.hpp"
+#include "oneplog/internal/log_entry.hpp"
 
 // Ring buffers / 环形队列
-#include "oneplog/ring_buffer.hpp"
-#include "oneplog/heap_ring_buffer.hpp"
+#include "oneplog/internal/heap_memory.hpp"
 
 #ifndef ONEPLOG_SYNC_ONLY
-#include "oneplog/shared_ring_buffer.hpp"
-#include "oneplog/shared_memory.hpp"
+#include "oneplog/internal/shared_memory.hpp"
 #endif
 
 // Formatting and output / 格式化和输出
-#include "oneplog/format.hpp"
-#include "oneplog/sink.hpp"
+#include "oneplog/internal/format.hpp"
+#include "oneplog/sinks/sink.hpp"
 
 // Threads / 线程
 #ifndef ONEPLOG_SYNC_ONLY
-#include "oneplog/pipeline_thread.hpp"
-#include "oneplog/writer_thread.hpp"
+#include "oneplog/internal/pipeline_thread.hpp"
+#include "oneplog/internal/writer_thread.hpp"
 #endif
 
 // Logger / 日志器
 #include "oneplog/logger.hpp"
 
 // Memory pool / 内存池
-#include "oneplog/memory_pool.hpp"
+#include "oneplog/internal/memory_pool.hpp"
 
 // Macros / 宏定义
 #include "oneplog/macros.hpp"

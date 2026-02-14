@@ -16,8 +16,8 @@
 #include <thread>
 #include <vector>
 
-#include <oneplog/heap_ring_buffer.hpp>
-#include <oneplog/log_entry.hpp>
+#include <oneplog/internal/heap_memory.hpp>
+#include <oneplog/internal/log_entry.hpp>
 
 namespace oneplog {
 namespace test {

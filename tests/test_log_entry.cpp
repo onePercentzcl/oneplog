@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-#include "oneplog/log_entry.hpp"
+#include "oneplog/internal/log_entry.hpp"
 
 namespace oneplog {
 namespace {

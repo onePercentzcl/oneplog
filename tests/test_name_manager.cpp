@@ -478,11 +478,11 @@ RC_GTEST_PROP(NameManagerPropertyTest, NameLengthInvariant, ()) {
         std::string result = NameManager<>::GetProcessName();
         
         // Result should never exceed 31 characters / 结果不应超过 31 字符
-        RC_ASSERT(result.length() <= 31);
+        RC_ASSERT(result.length() <= 31u);
         
         // If input was <= 31 chars, result should match input
         // 如果输入 <= 31 字符，结果应与输入匹配
-        if (name.length() <= 31) {
+        if (name.length() <= 31u) {
             RC_ASSERT(result == name);
         } else {
             // If input was > 31 chars, result should be first 31 chars
@@ -502,11 +502,11 @@ RC_GTEST_PROP(NameManagerPropertyTest, NameLengthInvariant, ()) {
         std::string result = NameManager<>::GetModuleName();
         
         // Result should never exceed 31 characters / 结果不应超过 31 字符
-        RC_ASSERT(result.length() <= 31);
+        RC_ASSERT(result.length() <= 31u);
         
         // If input was <= 31 chars, result should match input
         // 如果输入 <= 31 字符，结果应与输入匹配
-        if (name.length() <= 31) {
+        if (name.length() <= 31u) {
             RC_ASSERT(result == name);
         } else {
             // If input was > 31 chars, result should be first 31 chars

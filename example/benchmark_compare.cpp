@@ -17,6 +17,7 @@
 #include <fstream>
 
 #include <oneplog/oneplog.hpp>
+#include <oneplog/fast_logger.hpp>
 
 #ifdef HAS_SPDLOG
 #include <spdlog/spdlog.h>
@@ -37,7 +38,7 @@ struct Config {
     int iterations = 500000;
     int threads = 4;
     int warmup = 10000;
-    int runs = 100;  // 运行次数 / Number of runs
+    int runs = 100;
 };
 
 // ==============================================================================
@@ -53,15 +54,12 @@ struct Stats {
 Stats CalcStats(std::vector<int64_t>& latencies, double totalMs) {
     Stats s;
     if (latencies.empty()) return s;
-    
     std::sort(latencies.begin(), latencies.end());
     size_t n = latencies.size();
-    
     double sum = std::accumulate(latencies.begin(), latencies.end(), 0.0);
     s.meanLatency = sum / n;
     s.p99Latency = latencies[static_cast<size_t>(n * 0.99)];
     s.throughput = (n / totalMs) * 1000.0;
-    
     return s;
 }
 
@@ -77,104 +75,33 @@ std::string FormatThroughput(double val) {
     return oss.str();
 }
 
-// ==============================================================================
-// Multi-run Statistics / 多次运行统计
-// ==============================================================================
-
 struct MultiRunStats {
     double avgThroughput = 0;
-    double minThroughput = 0;
-    double maxThroughput = 0;
     double stdDev = 0;
 };
 
 MultiRunStats CalcMultiRunStats(const std::vector<double>& throughputs) {
     MultiRunStats mrs;
     if (throughputs.empty()) return mrs;
-    
     size_t n = throughputs.size();
     double sum = std::accumulate(throughputs.begin(), throughputs.end(), 0.0);
     mrs.avgThroughput = sum / n;
-    
-    mrs.minThroughput = *std::min_element(throughputs.begin(), throughputs.end());
-    mrs.maxThroughput = *std::max_element(throughputs.begin(), throughputs.end());
-    
-    // Calculate standard deviation / 计算标准差
     double sqSum = 0;
     for (double t : throughputs) {
         sqSum += (t - mrs.avgThroughput) * (t - mrs.avgThroughput);
     }
     mrs.stdDev = std::sqrt(sqSum / n);
-    
     return mrs;
 }
 
 // ==============================================================================
-// Null Sink for onePlog / onePlog 空输出
-// ==============================================================================
-
-class NullSink : public oneplog::Sink {
-public:
-    void Write(const std::string&) override {}
-    void Write(std::string_view) override {}
-    void WriteBatch(const std::vector<std::string>&) override {}
-    void Flush() override {}
-    void Close() override {}
-    bool HasError() const override { return false; }
-    std::string GetLastError() const override { return ""; }
-};
-
-// ==============================================================================
-// Simple Format (message only, like spdlog's %v)
-// 简单格式化器（仅消息，类似 spdlog 的 %v）
-// ==============================================================================
-
-class SimpleFormat : public oneplog::Format {
-public:
-    std::string FormatEntry(const oneplog::LogEntry& entry) override {
-        return entry.snapshot.FormatAll();
-    }
-
-    std::string FormatDirect(oneplog::Level /*level*/, uint64_t /*timestamp*/,
-                             uint32_t /*threadId*/, uint32_t /*processId*/,
-                             const std::string& message) override {
-        return message;
-    }
-
-#ifdef ONEPLOG_USE_FMT
-    void FormatDirectToBuffer(fmt::memory_buffer& buffer,
-                              oneplog::Level /*level*/, uint64_t /*timestamp*/,
-                              uint32_t /*threadId*/, uint32_t /*processId*/,
-                              std::string_view message) override {
-        // Zero-copy: just append message to buffer
-        // 零拷贝：直接将消息追加到缓冲区
-        buffer.append(message);
-    }
-#endif
-
-    oneplog::FormatRequirements GetRequirements() const override {
-        oneplog::FormatRequirements req;
-        req.needsTimestamp = false;
-        req.needsLevel = false;
-        req.needsThreadId = false;
-        req.needsProcessId = false;
-        req.needsSourceLocation = false;
-        return req;
-    }
-};
-
-// ==============================================================================
-// onePlog Benchmarks / onePlog 测试
+// onePlog Benchmarks using FastLogger / 使用 FastLogger 的 onePlog 测试
 // ==============================================================================
 
 Stats BenchOneplogSync(const Config& cfg) {
-    auto sink = std::make_shared<NullSink>();
-    // Disable shadow tail for low contention scenario (single thread)
-    // 低竞争场景（单线程）禁用影子 tail
-    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false, false> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
-    logger.Init();
+    // Use FastLogger with NullSink for sync benchmark
+    // 使用 FastLogger + NullSink 进行同步测试
+    oneplog::FastLogger<oneplog::Mode::Sync, oneplog::MessageOnlyFormat, oneplog::NullSinkType, oneplog::Level::Info> logger;
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);
@@ -192,115 +119,46 @@ Stats BenchOneplogSync(const Config& cfg) {
     }
     auto end = Clock::now();
 
+    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
+    return CalcStats(latencies, totalMs);
+}
+
+Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
+    std::remove(filename.c_str());
+    // Use FastLogger with FileSink for file benchmark
+    // 使用 FastLogger + FileSink 进行文件测试
+    oneplog::FastLogger<oneplog::Mode::Sync, oneplog::MessageOnlyFormat, oneplog::FileSinkType, oneplog::Level::Info> 
+        logger(oneplog::FileSinkType(filename.c_str()));
+
+    for (int i = 0; i < cfg.warmup; ++i) {
+        logger.Info("Warmup {}", i);
+    }
+    logger.Flush();
+
+    std::vector<int64_t> latencies;
+    latencies.reserve(cfg.iterations);
+
+    auto start = Clock::now();
+    for (int i = 0; i < cfg.iterations; ++i) {
+        auto t1 = Clock::now();
+        logger.Info("Message {} value {}", i, 3.14159);
+        auto t2 = Clock::now();
+        latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
+    }
+    auto end = Clock::now();
+
+    logger.Flush();
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalcStats(latencies, totalMs);
 }
 
 Stats BenchOneplogAsync(const Config& cfg) {
-    auto sink = std::make_shared<NullSink>();
-    // Disable shadow tail for low contention scenario (single thread)
-    // 低竞争场景（单线程）禁用影子 tail
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, false> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
-    
-    oneplog::LoggerConfig logCfg;
-    logCfg.heapRingBufferSize = 1024 * 1024;
-    logger.Init(logCfg);
+    // Use FastLogger with NullSink for async benchmark
+    // 使用 FastLogger + NullSink 进行异步测试
+    oneplog::FastLogger<oneplog::Mode::Async, oneplog::MessageOnlyFormat, oneplog::NullSinkType, oneplog::Level::Info> logger;
 
     for (int i = 0; i < cfg.warmup; ++i) {
-        logger.Info("Warmup {}", i);
-    }
-    logger.Flush();
-
-    std::vector<int64_t> latencies;
-    latencies.reserve(cfg.iterations);
-
-    auto start = Clock::now();
-    for (int i = 0; i < cfg.iterations; ++i) {
-        auto t1 = Clock::now();
-        logger.Info("Message {} value {}", i, 3.14159);
-        auto t2 = Clock::now();
-        latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
-    }
-    auto end = Clock::now();
-
-    logger.Flush();
-    logger.Shutdown();
-
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    return CalcStats(latencies, totalMs);
-}
-
-Stats BenchOneplogAsyncMT(const Config& cfg) {
-    auto sink = std::make_shared<NullSink>();
-    // Keep shadow tail enabled for multi-thread scenario (higher contention)
-    // 多线程场景保持启用影子 tail（较高竞争）
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, true> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
-    
-    oneplog::LoggerConfig logCfg;
-    logCfg.heapRingBufferSize = 1024 * 1024;
-    logger.Init(logCfg);
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger.Info("Warmup {}", i);
-    }
-    logger.Flush();
-
-    int iterPerThread = cfg.iterations / cfg.threads;
-    std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
-    std::atomic<bool> go{false};
-
-    std::vector<std::thread> threads;
-    for (int t = 0; t < cfg.threads; ++t) {
-        threadLatencies[t].reserve(iterPerThread);
-        threads.emplace_back([&, t]() {
-            while (!go.load()) std::this_thread::yield();
-            for (int i = 0; i < iterPerThread; ++i) {
-                auto t1 = Clock::now();
-                logger.Info("Thread {} msg {} val {}", t, i, 3.14159);
-                auto t2 = Clock::now();
-                threadLatencies[t].push_back(
-                    std::chrono::duration_cast<Duration>(t2 - t1).count());
-            }
-        });
-    }
-
-    auto start = Clock::now();
-    go = true;
-    for (auto& th : threads) th.join();
-    auto end = Clock::now();
-
-    logger.Flush();
-    logger.Shutdown();
-
-    std::vector<int64_t> all;
-    for (auto& tl : threadLatencies) {
-        all.insert(all.end(), tl.begin(), tl.end());
-    }
-
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    return CalcStats(all, totalMs);
-}
-
-// ==============================================================================
-// File Output Benchmarks / 文件输出测试
-// ==============================================================================
-
-Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
-    std::remove(filename.c_str());
-    auto sink = std::make_shared<oneplog::FileSink>(filename);
-    // Disable shadow tail for low contention scenario (single thread)
-    // 低竞争场景（单线程）禁用影子 tail
-    oneplog::Logger<oneplog::Mode::Sync, oneplog::Level::Info, false, false> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
-    logger.Init();
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger.Info("Warmup {}", i);
+        logger.Info("Warmup {} {}", i, 3.14159);
     }
     logger.Flush();
 
@@ -323,16 +181,64 @@ Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
 
 Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
-    auto sink = std::make_shared<oneplog::FileSink>(filename);
-    // Disable shadow tail for low contention scenario (single thread)
-    // 低竞争场景（单线程）禁用影子 tail
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, false> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
+    // Use FastLogger with FileSink for async file benchmark
+    // 使用 FastLogger + FileSink 进行异步文件测试
+    oneplog::FastLogger<oneplog::Mode::Async, oneplog::MessageOnlyFormat, oneplog::FileSinkType, oneplog::Level::Info> 
+        logger(oneplog::FileSinkType(filename.c_str()));
+
+    for (int i = 0; i < cfg.warmup; ++i) {
+        logger.Info("Warmup {}", i);
+    }
+    logger.Flush();
+
+    std::vector<int64_t> latencies;
+    latencies.reserve(cfg.iterations);
+
+    auto start = Clock::now();
+    for (int i = 0; i < cfg.iterations; ++i) {
+        auto t1 = Clock::now();
+        logger.Info("Message {} value {}", i, 3.14159);
+        auto t2 = Clock::now();
+        latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
+    }
+    auto end = Clock::now();
+
+    logger.Flush();
+    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
+    return CalcStats(latencies, totalMs);
+}
+
+// ==============================================================================
+// onePlog MProc Benchmarks (using original Logger) / onePlog 多进程模式测试
+// ==============================================================================
+
+// Simple NullSink for MProc benchmark
+class BenchNullSink : public oneplog::Sink {
+public:
+    void Write(const std::string&) override {}
+    void Flush() override {}
+    void Close() override {}
+    bool HasError() const override { return false; }
+    std::string GetLastError() const override { return ""; }
+};
+
+Stats BenchOneplogMProc(const Config& cfg) {
+    // Use original Logger with MProc mode for benchmark
+    // 使用原始 Logger 的 MProc 模式进行测试
+    oneplog::LoggerConfig config;
+    config.sharedMemoryName = "/oneplog_bench_mproc";
+    config.sharedRingBufferSize = 65536;
+    config.heapRingBufferSize = 8192;
+    config.queueFullPolicy = oneplog::QueueFullPolicy::Block;
     
-    oneplog::LoggerConfig logCfg;
-    logCfg.heapRingBufferSize = 1024 * 1024;
-    logger.Init(logCfg);
+    auto nullSink = std::make_shared<BenchNullSink>();
+    // Use PatternFormat with message-only pattern
+    auto format = std::make_shared<oneplog::PatternFormat>("%m");
+    
+    oneplog::MProcLogger<oneplog::Level::Info, false, false> logger;
+    logger.AddSink(nullSink);
+    logger.SetFormat(format);
+    logger.Init(config);
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);
@@ -353,63 +259,8 @@ Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
 
     logger.Flush();
     logger.Shutdown();
-
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
     return CalcStats(latencies, totalMs);
-}
-
-Stats BenchOneplogAsyncFileMT(const Config& cfg, const std::string& filename) {
-    std::remove(filename.c_str());
-    auto sink = std::make_shared<oneplog::FileSink>(filename);
-    // Keep shadow tail enabled for multi-thread scenario (higher contention)
-    // 多线程场景保持启用影子 tail（较高竞争）
-    oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Info, false, true> logger;
-    logger.SetSink(sink);
-    logger.SetFormat(std::make_shared<SimpleFormat>());
-    
-    oneplog::LoggerConfig logCfg;
-    logCfg.heapRingBufferSize = 1024 * 1024;
-    logger.Init(logCfg);
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger.Info("Warmup {}", i);
-    }
-    logger.Flush();
-
-    int iterPerThread = cfg.iterations / cfg.threads;
-    std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
-    std::atomic<bool> go{false};
-
-    std::vector<std::thread> threads;
-    for (int t = 0; t < cfg.threads; ++t) {
-        threadLatencies[t].reserve(iterPerThread);
-        threads.emplace_back([&, t]() {
-            while (!go.load()) std::this_thread::yield();
-            for (int i = 0; i < iterPerThread; ++i) {
-                auto t1 = Clock::now();
-                logger.Info("Thread {} msg {} val {}", t, i, 3.14159);
-                auto t2 = Clock::now();
-                threadLatencies[t].push_back(
-                    std::chrono::duration_cast<Duration>(t2 - t1).count());
-            }
-        });
-    }
-
-    auto start = Clock::now();
-    go = true;
-    for (auto& th : threads) th.join();
-    auto end = Clock::now();
-
-    logger.Flush();
-    logger.Shutdown();
-
-    std::vector<int64_t> all;
-    for (auto& tl : threadLatencies) {
-        all.insert(all.end(), tl.begin(), tl.end());
-    }
-
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    return CalcStats(all, totalMs);
 }
 
 // ==============================================================================
@@ -444,94 +295,6 @@ Stats BenchSpdlogSync(const Config& cfg) {
     return CalcStats(latencies, totalMs);
 }
 
-Stats BenchSpdlogAsync(const Config& cfg) {
-    spdlog::init_thread_pool(1024 * 1024, 1);
-    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
-    auto logger = std::make_shared<spdlog::async_logger>(
-        "spdlog_async", sink, spdlog::thread_pool(), 
-        spdlog::async_overflow_policy::block);
-    logger->set_level(spdlog::level::info);
-    logger->set_pattern("%v");
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger->info("Warmup {}", i);
-    }
-    logger->flush();
-
-    std::vector<int64_t> latencies;
-    latencies.reserve(cfg.iterations);
-
-    auto start = Clock::now();
-    for (int i = 0; i < cfg.iterations; ++i) {
-        auto t1 = Clock::now();
-        logger->info("Message {} value {}", i, 3.14159);
-        auto t2 = Clock::now();
-        latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
-    }
-    auto end = Clock::now();
-
-    logger->flush();
-
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    auto stats = CalcStats(latencies, totalMs);
-    
-    spdlog::shutdown();
-    return stats;
-}
-
-Stats BenchSpdlogAsyncMT(const Config& cfg) {
-    spdlog::init_thread_pool(1024 * 1024, 1);
-    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
-    auto logger = std::make_shared<spdlog::async_logger>(
-        "spdlog_async_mt", sink, spdlog::thread_pool(),
-        spdlog::async_overflow_policy::block);
-    logger->set_level(spdlog::level::info);
-    logger->set_pattern("%v");
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger->info("Warmup {}", i);
-    }
-    logger->flush();
-
-    int iterPerThread = cfg.iterations / cfg.threads;
-    std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
-    std::atomic<bool> go{false};
-
-    std::vector<std::thread> threads;
-    for (int t = 0; t < cfg.threads; ++t) {
-        threadLatencies[t].reserve(iterPerThread);
-        threads.emplace_back([&, t]() {
-            while (!go.load()) std::this_thread::yield();
-            for (int i = 0; i < iterPerThread; ++i) {
-                auto t1 = Clock::now();
-                logger->info("Thread {} msg {} val {}", t, i, 3.14159);
-                auto t2 = Clock::now();
-                threadLatencies[t].push_back(
-                    std::chrono::duration_cast<Duration>(t2 - t1).count());
-            }
-        });
-    }
-
-    auto start = Clock::now();
-    go = true;
-    for (auto& th : threads) th.join();
-    auto end = Clock::now();
-
-    logger->flush();
-
-    std::vector<int64_t> all;
-    for (auto& tl : threadLatencies) {
-        all.insert(all.end(), tl.begin(), tl.end());
-    }
-
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    auto stats = CalcStats(all, totalMs);
-    
-    spdlog::shutdown();
-    return stats;
-}
-
-// File output benchmarks / 文件输出测试
 Stats BenchSpdlogSyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
     auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(filename, true);
@@ -561,9 +324,41 @@ Stats BenchSpdlogSyncFile(const Config& cfg, const std::string& filename) {
     return CalcStats(latencies, totalMs);
 }
 
+Stats BenchSpdlogAsync(const Config& cfg) {
+    spdlog::init_thread_pool(8192, 1);
+    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+    auto logger = std::make_shared<spdlog::async_logger>(
+        "spdlog_async", sink, spdlog::thread_pool(), 
+        spdlog::async_overflow_policy::block);
+    logger->set_level(spdlog::level::info);
+    logger->set_pattern("%v");
+
+    for (int i = 0; i < cfg.warmup; ++i) {
+        logger->info("Warmup {}", i);
+    }
+    logger->flush();
+
+    std::vector<int64_t> latencies;
+    latencies.reserve(cfg.iterations);
+
+    auto start = Clock::now();
+    for (int i = 0; i < cfg.iterations; ++i) {
+        auto t1 = Clock::now();
+        logger->info("Message {} value {}", i, 3.14159);
+        auto t2 = Clock::now();
+        latencies.push_back(std::chrono::duration_cast<Duration>(t2 - t1).count());
+    }
+    auto end = Clock::now();
+
+    logger->flush();
+    spdlog::shutdown();
+    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
+    return CalcStats(latencies, totalMs);
+}
+
 Stats BenchSpdlogAsyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
-    spdlog::init_thread_pool(1024 * 1024, 1);
+    spdlog::init_thread_pool(8192, 1);
     auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(filename, true);
     auto logger = std::make_shared<spdlog::async_logger>(
         "spdlog_async_file", sink, spdlog::thread_pool(),
@@ -589,64 +384,9 @@ Stats BenchSpdlogAsyncFile(const Config& cfg, const std::string& filename) {
     auto end = Clock::now();
 
     logger->flush();
-    double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    auto stats = CalcStats(latencies, totalMs);
-    
     spdlog::shutdown();
-    return stats;
-}
-
-Stats BenchSpdlogAsyncFileMT(const Config& cfg, const std::string& filename) {
-    std::remove(filename.c_str());
-    spdlog::init_thread_pool(1024 * 1024, 1);
-    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(filename, true);
-    auto logger = std::make_shared<spdlog::async_logger>(
-        "spdlog_async_file_mt", sink, spdlog::thread_pool(),
-        spdlog::async_overflow_policy::block);
-    logger->set_level(spdlog::level::info);
-    logger->set_pattern("%v");
-
-    for (int i = 0; i < cfg.warmup; ++i) {
-        logger->info("Warmup {}", i);
-    }
-    logger->flush();
-
-    int iterPerThread = cfg.iterations / cfg.threads;
-    std::vector<std::vector<int64_t>> threadLatencies(cfg.threads);
-    std::atomic<bool> go{false};
-
-    std::vector<std::thread> threads;
-    for (int t = 0; t < cfg.threads; ++t) {
-        threadLatencies[t].reserve(iterPerThread);
-        threads.emplace_back([&, t]() {
-            while (!go.load()) std::this_thread::yield();
-            for (int i = 0; i < iterPerThread; ++i) {
-                auto t1 = Clock::now();
-                logger->info("Thread {} msg {} val {}", t, i, 3.14159);
-                auto t2 = Clock::now();
-                threadLatencies[t].push_back(
-                    std::chrono::duration_cast<Duration>(t2 - t1).count());
-            }
-        });
-    }
-
-    auto start = Clock::now();
-    go = true;
-    for (auto& th : threads) th.join();
-    auto end = Clock::now();
-
-    logger->flush();
-
-    std::vector<int64_t> all;
-    for (auto& tl : threadLatencies) {
-        all.insert(all.end(), tl.begin(), tl.end());
-    }
-
     double totalMs = std::chrono::duration<double, std::milli>(end - start).count();
-    auto stats = CalcStats(all, totalMs);
-    
-    spdlog::shutdown();
-    return stats;
+    return CalcStats(latencies, totalMs);
 }
 
 #endif
@@ -662,17 +402,14 @@ void PrintResult(const std::string& lib, const std::string& mode, const MultiRun
               << " ± " << std::setw(6) << FormatThroughput(mrs.stdDev) << " ops/sec\n";
 }
 
-// Run benchmark multiple times and collect stats / 多次运行测试并收集统计
 template<typename BenchFunc>
 MultiRunStats RunMultiple(BenchFunc func, int runs) {
     std::vector<double> throughputs;
     throughputs.reserve(runs);
-    
     for (int r = 0; r < runs; ++r) {
         Stats s = func();
         throughputs.push_back(s.throughput);
     }
-    
     return CalcMultiRunStats(throughputs);
 }
 
@@ -680,12 +417,10 @@ template<typename BenchFunc>
 MultiRunStats RunMultipleWithArg(BenchFunc func, int runs, const std::string& arg) {
     std::vector<double> throughputs;
     throughputs.reserve(runs);
-    
     for (int r = 0; r < runs; ++r) {
         Stats s = func(arg);
         throughputs.push_back(s.throughput);
     }
-    
     return CalcMultiRunStats(throughputs);
 }
 
@@ -696,8 +431,6 @@ int main(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "-i" && i + 1 < argc) {
             cfg.iterations = std::atoi(argv[++i]);
-        } else if (arg == "-t" && i + 1 < argc) {
-            cfg.threads = std::atoi(argv[++i]);
         } else if (arg == "-r" && i + 1 < argc) {
             cfg.runs = std::atoi(argv[++i]);
         }
@@ -705,21 +438,19 @@ int main(int argc, char* argv[]) {
 
     std::cout << "\n";
     std::cout << "================================================================\n";
-    std::cout << "     onePlog vs spdlog Performance Comparison\n";
-    std::cout << "     onePlog 与 spdlog 性能对比\n";
+    std::cout << "     onePlog FastLogger vs spdlog Performance Comparison\n";
+    std::cout << "     onePlog FastLogger 与 spdlog 性能对比\n";
     std::cout << "================================================================\n";
     std::cout << "\n";
     std::cout << "  Config / 配置:\n";
     std::cout << "    Iterations / 迭代次数: " << cfg.iterations << "\n";
-    std::cout << "    Threads / 线程数:      " << cfg.threads << "\n";
     std::cout << "    Warmup / 预热:         " << cfg.warmup << "\n";
     std::cout << "    Runs / 运行次数:       " << cfg.runs << "\n";
     std::cout << "\n";
 
 #ifndef HAS_SPDLOG
     std::cout << "  WARNING: spdlog not found! Only running onePlog benchmarks.\n";
-    std::cout << "  警告: 未找到 spdlog！仅运行 onePlog 测试。\n";
-    std::cout << "  Install with: xmake require spdlog\n\n";
+    std::cout << "  警告: 未找到 spdlog！仅运行 onePlog 测试。\n\n";
 #endif
 
     std::cout << "  " << std::left << std::setw(12) << "Library"
@@ -727,65 +458,57 @@ int main(int argc, char* argv[]) {
               << std::right << std::setw(24) << "Throughput (avg ± stddev)\n";
     std::cout << "  " << std::string(60, '-') << "\n";
 
-    // onePlog tests
-    std::cout << "\n  [onePlog]\n";
+    // onePlog FastLogger tests
+    std::cout << "\n  [onePlog FastLogger - Sync]\n";
     
     auto oneplogSync = RunMultiple([&]() { return BenchOneplogSync(cfg); }, cfg.runs);
-    PrintResult("onePlog", "Sync (1 Thread)", oneplogSync);
+    PrintResult("onePlog", "Sync (NullSink)", oneplogSync);
+    
+    auto oneplogSyncFile = RunMultipleWithArg(
+        [&](const std::string& f) { return BenchOneplogSyncFile(cfg, f); }, 
+        cfg.runs, "/tmp/oneplog_sync.log");
+    PrintResult("onePlog", "Sync (FileSink)", oneplogSyncFile);
+
+    std::cout << "\n  [onePlog FastLogger - Async]\n";
     
     auto oneplogAsync = RunMultiple([&]() { return BenchOneplogAsync(cfg); }, cfg.runs);
-    PrintResult("onePlog", "Async (1 Thread)", oneplogAsync);
+    PrintResult("onePlog", "Async (NullSink)", oneplogAsync);
     
-    auto oneplogAsyncMT = RunMultiple([&]() { return BenchOneplogAsyncMT(cfg); }, cfg.runs);
-    PrintResult("onePlog", "Async (" + std::to_string(cfg.threads) + " Threads)", oneplogAsyncMT);
+    auto oneplogAsyncFile = RunMultipleWithArg(
+        [&](const std::string& f) { return BenchOneplogAsyncFile(cfg, f); },
+        cfg.runs, "/tmp/oneplog_async.log");
+    PrintResult("onePlog", "Async (FileSink)", oneplogAsyncFile);
 
-    // File output tests / 文件输出测试
-    std::cout << "\n  [onePlog - File Output / 文件输出]\n";
+    std::cout << "\n  [onePlog Logger - MProc]\n";
     
-    auto oneplogSyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogSyncFile(cfg, f); }, 
-                                               cfg.runs, "/tmp/oneplog_sync.log");
-    PrintResult("onePlog", "Sync File", oneplogSyncFile);
-    
-    auto oneplogAsyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogAsyncFile(cfg, f); },
-                                                cfg.runs, "/tmp/oneplog_async.log");
-    PrintResult("onePlog", "Async File", oneplogAsyncFile);
-    
-    auto oneplogAsyncFileMT = RunMultipleWithArg([&](const std::string& f) { return BenchOneplogAsyncFileMT(cfg, f); },
-                                                  cfg.runs, "/tmp/oneplog_async_mt.log");
-    PrintResult("onePlog", "Async File (" + std::to_string(cfg.threads) + "T)", oneplogAsyncFileMT);
+    auto oneplogMProc = RunMultiple([&]() { return BenchOneplogMProc(cfg); }, cfg.runs);
+    PrintResult("onePlog", "MProc (NullSink)", oneplogMProc);
 
 #ifdef HAS_SPDLOG
     // spdlog tests
-    std::cout << "\n  [spdlog]\n";
+    std::cout << "\n  [spdlog - Sync]\n";
     
     auto spdlogSync = RunMultiple([&]() { return BenchSpdlogSync(cfg); }, cfg.runs);
-    PrintResult("spdlog", "Sync (1 Thread)", spdlogSync);
+    PrintResult("spdlog", "Sync (NullSink)", spdlogSync);
+    
+    auto spdlogSyncFile = RunMultipleWithArg(
+        [&](const std::string& f) { return BenchSpdlogSyncFile(cfg, f); },
+        cfg.runs, "/tmp/spdlog_sync.log");
+    PrintResult("spdlog", "Sync (FileSink)", spdlogSyncFile);
+
+    std::cout << "\n  [spdlog - Async]\n";
     
     auto spdlogAsync = RunMultiple([&]() { return BenchSpdlogAsync(cfg); }, cfg.runs);
-    PrintResult("spdlog", "Async (1 Thread)", spdlogAsync);
+    PrintResult("spdlog", "Async (NullSink)", spdlogAsync);
     
-    auto spdlogAsyncMT = RunMultiple([&]() { return BenchSpdlogAsyncMT(cfg); }, cfg.runs);
-    PrintResult("spdlog", "Async (" + std::to_string(cfg.threads) + " Threads)", spdlogAsyncMT);
+    auto spdlogAsyncFile = RunMultipleWithArg(
+        [&](const std::string& f) { return BenchSpdlogAsyncFile(cfg, f); },
+        cfg.runs, "/tmp/spdlog_async.log");
+    PrintResult("spdlog", "Async (FileSink)", spdlogAsyncFile);
 
-    // File output tests / 文件输出测试
-    std::cout << "\n  [spdlog - File Output / 文件输出]\n";
-    
-    auto spdlogSyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogSyncFile(cfg, f); },
-                                              cfg.runs, "/tmp/spdlog_sync.log");
-    PrintResult("spdlog", "Sync File", spdlogSyncFile);
-    
-    auto spdlogAsyncFile = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogAsyncFile(cfg, f); },
-                                               cfg.runs, "/tmp/spdlog_async.log");
-    PrintResult("spdlog", "Async File", spdlogAsyncFile);
-    
-    auto spdlogAsyncFileMT = RunMultipleWithArg([&](const std::string& f) { return BenchSpdlogAsyncFileMT(cfg, f); },
-                                                 cfg.runs, "/tmp/spdlog_async_mt.log");
-    PrintResult("spdlog", "Async File (" + std::to_string(cfg.threads) + "T)", spdlogAsyncFileMT);
-
-    // Summary comparison
-    std::cout << "\n";
-    std::cout << "  " << std::string(60, '=') << "\n";
-    std::cout << "  Summary / 总结 (based on " << cfg.runs << " runs average):\n";
+    // Summary
+    std::cout << "\n  " << std::string(60, '=') << "\n";
+    std::cout << "  Summary / 总结:\n";
     std::cout << "  " << std::string(60, '-') << "\n";
     
     auto ratio = [](double a, double b) {
@@ -794,26 +517,18 @@ int main(int argc, char* argv[]) {
     };
     
     std::cout << std::fixed << std::setprecision(1);
-    std::cout << "  Sync Mode:   onePlog " 
+    std::cout << "  Sync NullSink:   onePlog " 
               << (oneplogSync.avgThroughput >= spdlogSync.avgThroughput ? "faster" : "slower")
               << " by " << std::abs(ratio(oneplogSync.avgThroughput, spdlogSync.avgThroughput)) << "%\n";
-    std::cout << "  Async Mode:  onePlog "
-              << (oneplogAsync.avgThroughput >= spdlogAsync.avgThroughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsync.avgThroughput, spdlogAsync.avgThroughput)) << "%\n";
-    std::cout << "  Async " << cfg.threads << "T:   onePlog "
-              << (oneplogAsyncMT.avgThroughput >= spdlogAsyncMT.avgThroughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsyncMT.avgThroughput, spdlogAsyncMT.avgThroughput)) << "%\n";
-    
-    std::cout << "\n  File Output / 文件输出:\n";
-    std::cout << "  Sync File:   onePlog "
+    std::cout << "  Sync FileSink:   onePlog "
               << (oneplogSyncFile.avgThroughput >= spdlogSyncFile.avgThroughput ? "faster" : "slower")
               << " by " << std::abs(ratio(oneplogSyncFile.avgThroughput, spdlogSyncFile.avgThroughput)) << "%\n";
-    std::cout << "  Async File:  onePlog "
+    std::cout << "  Async NullSink:  onePlog "
+              << (oneplogAsync.avgThroughput >= spdlogAsync.avgThroughput ? "faster" : "slower")
+              << " by " << std::abs(ratio(oneplogAsync.avgThroughput, spdlogAsync.avgThroughput)) << "%\n";
+    std::cout << "  Async FileSink:  onePlog "
               << (oneplogAsyncFile.avgThroughput >= spdlogAsyncFile.avgThroughput ? "faster" : "slower")
               << " by " << std::abs(ratio(oneplogAsyncFile.avgThroughput, spdlogAsyncFile.avgThroughput)) << "%\n";
-    std::cout << "  Async File " << cfg.threads << "T: onePlog "
-              << (oneplogAsyncFileMT.avgThroughput >= spdlogAsyncFileMT.avgThroughput ? "faster" : "slower")
-              << " by " << std::abs(ratio(oneplogAsyncFileMT.avgThroughput, spdlogAsyncFileMT.avgThroughput)) << "%\n";
 #endif
 
     std::cout << "\n================================================================\n";

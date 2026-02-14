@@ -43,15 +43,7 @@ add_includedirs("../include")
 -- Source Files / 源文件
 -- ==============================================================================
 local oneplog_sources = {
-    "../src/oneplog/log_entry.cpp",
-    "../src/oneplog/heap_ring_buffer.cpp",
-    "../src/oneplog/shared_ring_buffer.cpp",
-    "../src/oneplog/format.cpp",
-    "../src/oneplog/sink.cpp",
-    "../src/oneplog/pipeline_thread.cpp",
-    "../src/oneplog/writer_thread.cpp",
-    "../src/oneplog/logger.cpp",
-    "../src/oneplog/memory_pool.cpp"
+    "../src/oneplog/instantiations.cpp"
 }
 
 local fmt_sources = {
@@ -127,6 +119,99 @@ example_target("benchmark_optimized_name_manager", "benchmark_optimized_name_man
 
 -- Shadow tail optimization benchmark / Shadow tail 优化基准测试
 example_target("benchmark_shadow_tail", "benchmark_shadow_tail.cpp")
+
+-- Stress test / 压力测试
+example_target("stress_test", "stress_test.cpp")
+
+-- Simple async test
+target("test_async")
+    set_kind("binary")
+    add_files("test_async.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Simple async test - minimal
+target("test_async_simple")
+    set_kind("binary")
+    add_files("test_async_simple.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test async fastlogger pattern
+target("test_async_fastlogger")
+    set_kind("binary")
+    add_files("test_async_fastlogger.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test async exact copy
+target("test_async_exact")
+    set_kind("binary")
+    add_files("test_async_exact.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test real FastLogger
+target("test_async_real")
+    set_kind("binary")
+    add_files("test_async_real.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test variadic template
+target("test_async_variadic")
+    set_kind("binary")
+    add_files("test_async_variadic.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test with real MessageOnlyFormat
+target("test_async_format")
+    set_kind("binary")
+    add_files("test_async_format.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test template instantiation
+target("test_async_template")
+    set_kind("binary")
+    add_files("test_async_template.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
+
+-- Test with oneplog::MessageOnlyFormat
+target("test_async_oneplog_format")
+    set_kind("binary")
+    add_files("test_async_oneplog_format.cpp")
+    add_files(oneplog_sources)
+    add_files(fmt_sources)
+    add_defines("ONEPLOG_USE_FMT")
+    add_platform_libs()
+target_end()
 
 -- ==============================================================================
 -- spdlog comparison benchmark (optional)

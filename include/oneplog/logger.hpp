@@ -25,16 +25,16 @@
 #include <utility>
 #include <vector>
 
-#include "oneplog/binary_snapshot.hpp"
 #include "oneplog/common.hpp"
-#include "oneplog/format.hpp"
-#include "oneplog/heap_ring_buffer.hpp"
-#include "oneplog/log_entry.hpp"
 #include "oneplog/name_manager.hpp"
-#include "oneplog/pipeline_thread.hpp"
-#include "oneplog/shared_memory.hpp"
 #include "oneplog/sink.hpp"
-#include "oneplog/writer_thread.hpp"
+#include "oneplog/internal/binary_snapshot.hpp"
+#include "oneplog/internal/format.hpp"
+#include "oneplog/internal/heap_memory.hpp"
+#include "oneplog/internal/log_entry.hpp"
+#include "oneplog/internal/pipeline_thread.hpp"
+#include "oneplog/internal/shared_memory.hpp"
+#include "oneplog/internal/writer_thread.hpp"
 
 #ifdef _WIN32
 #include <windows.h>

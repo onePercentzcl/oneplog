@@ -12,7 +12,7 @@
 #include <rapidcheck/gtest.h>
 #endif
 
-#include <oneplog/binary_snapshot.hpp>
+#include <oneplog/internal/binary_snapshot.hpp>
 
 namespace oneplog {
 namespace test {

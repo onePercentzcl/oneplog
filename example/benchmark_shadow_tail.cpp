@@ -22,9 +22,8 @@
 #include <cmath>
 #include <sstream>
 
-#include <oneplog/ring_buffer.hpp>
-#include <oneplog/heap_ring_buffer.hpp>
-#include <oneplog/log_entry.hpp>
+#include <oneplog/internal/heap_memory.hpp>
+#include <oneplog/internal/log_entry.hpp>
 
 using Clock = std::chrono::high_resolution_clock;
 using Duration = std::chrono::nanoseconds;

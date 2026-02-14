@@ -3,26 +3,16 @@
 # ==============================================================================
 
 # ==============================================================================
-# Dependencies / 依赖
+# Dependencies / 依赖 (使用本地目录)
 # ==============================================================================
-include(FetchContent)
 
-# Google Test
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.14.0
-)
-FetchContent_MakeAvailable(googletest)
+# Google Test - 本地路径
+add_subdirectory(${CMAKE_SOURCE_DIR}/external/googletest ${CMAKE_BINARY_DIR}/googletest)
 
-# RapidCheck (Property-based testing / 属性测试)
-FetchContent_Declare(
-    rapidcheck
-    GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
-    GIT_TAG master
-)
+# RapidCheck - 本地路径
 set(RC_ENABLE_GTEST ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(rapidcheck)
+set(RC_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_SOURCE_DIR}/external/rapidcheck ${CMAKE_BINARY_DIR}/rapidcheck)
 
 # ==============================================================================
 # Test Sources / 测试源文件
@@ -45,15 +35,15 @@ add_executable(oneplog_tests ${TEST_SOURCES})
 
 target_link_libraries(oneplog_tests PRIVATE
     oneplog
-    GTest::gtest
-    GTest::gtest_main
-    rapidcheck
     rapidcheck_gtest
+    rapidcheck
+    GTest::gtest_main
+    GTest::gtest
 )
 
 target_include_directories(oneplog_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${rapidcheck_SOURCE_DIR}/extras/gtest/include
+    ${CMAKE_SOURCE_DIR}/external/rapidcheck/extras/gtest/include
 )
 
 # Enable RapidCheck property-based testing / 启用 RapidCheck 属性测试

@@ -129,7 +129,17 @@ inline const std::string& GetProcessName() {
 
 namespace detail {
 
-inline thread_local std::string tls_moduleName = "main";
+/**
+ * @brief Get thread-local module name
+ * @brief 获取线程局部模块名
+ *
+ * Uses a function to avoid duplicate symbol issues with inline thread_local.
+ * 使用函数避免 inline thread_local 的重复符号问题。
+ */
+inline std::string& GetTlsModuleName() {
+    static thread_local std::string tls_moduleName = "main";
+    return tls_moduleName;
+}
 
 inline uint32_t GetCurrentThreadIdInternal() {
 #ifdef _WIN32
@@ -172,9 +182,9 @@ inline void RegisterModuleName();
  */
 inline void SetModuleName(const std::string& name) {
     if (name.length() > config::kMaxNameLength) {
-        detail::tls_moduleName = name.substr(0, config::kMaxNameLength);
+        detail::GetTlsModuleName() = name.substr(0, config::kMaxNameLength);
     } else {
-        detail::tls_moduleName = name;
+        detail::GetTlsModuleName() = name;
     }
     
     // Auto-register to global table if enabled (Async/MProc mode)
@@ -189,7 +199,7 @@ inline void SetModuleName(const std::string& name) {
  * @brief 获取当前线程的模块名
  */
 inline const std::string& GetModuleName() {
-    return detail::tls_moduleName;
+    return detail::GetTlsModuleName();
 }
 
 /**
@@ -358,7 +368,7 @@ inline ThreadModuleTable& GetGlobalThreadModuleTable() {
  */
 inline void RegisterModuleName() {
     uint32_t tid = detail::GetCurrentThreadIdInternal();
-    detail::GetGlobalThreadModuleTable().Register(tid, detail::tls_moduleName);
+    detail::GetGlobalThreadModuleTable().Register(tid, detail::GetTlsModuleName());
 }
 
 /**

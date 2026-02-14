@@ -198,15 +198,15 @@ RC_GTEST_PROP(LevelPropertyTest, LevelFormattingConsistency, ()) {
     // Verify correct length based on style / 根据样式验证正确长度
     switch (style) {
         case LevelNameStyle::Full:
-            RC_ASSERT(str.size() >= 3);  // "off" is shortest / "off" 最短
-            RC_ASSERT(str.size() <= 8);  // "critical" is longest / "critical" 最长
+            RC_ASSERT(str.size() >= 3u);  // "off" is shortest / "off" 最短
+            RC_ASSERT(str.size() <= 8u);  // "critical" is longest / "critical" 最长
             break;
         case LevelNameStyle::Short4:
-            RC_ASSERT(str.size() >= 3);  // "OFF" is 3 chars / "OFF" 是 3 字符
-            RC_ASSERT(str.size() <= 4);  // Most are 4 chars / 大多数是 4 字符
+            RC_ASSERT(str.size() >= 3u);  // "OFF" is 3 chars / "OFF" 是 3 字符
+            RC_ASSERT(str.size() <= 4u);  // Most are 4 chars / 大多数是 4 字符
             break;
         case LevelNameStyle::Short1:
-            RC_ASSERT(str.size() == 1);  // Always 1 char / 总是 1 字符
+            RC_ASSERT(str.size() == 1u);  // Always 1 char / 总是 1 字符
             break;
     }
 

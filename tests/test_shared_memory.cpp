@@ -14,7 +14,7 @@
 #include <thread>
 #include <vector>
 
-#include <oneplog/shared_memory.hpp>
+#include <oneplog/internal/shared_memory.hpp>
 
 namespace oneplog {
 namespace test {

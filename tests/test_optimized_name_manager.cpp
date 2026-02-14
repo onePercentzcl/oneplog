@@ -8,7 +8,7 @@
 
 #include <gtest/gtest.h>
 
-#include <oneplog/optimized_name_manager.hpp>
+#include <oneplog/internal/optimized_name_manager.hpp>
 
 #include <thread>
 #include <vector>

@@ -45,16 +45,18 @@ endif()
 # ==============================================================================
 set(ONEPLOG_HEADERS
     include/oneplog/common.hpp
-    include/oneplog/ring_buffer.hpp
-    include/oneplog/binary_snapshot.hpp
-    include/oneplog/log_entry.hpp
-    include/oneplog/format.hpp
-    include/oneplog/sink.hpp
-    include/oneplog/pipeline_thread.hpp
-    include/oneplog/writer_thread.hpp
+    include/oneplog/internal/heap_memory.hpp
+    include/oneplog/internal/shared_memory.hpp
+    include/oneplog/internal/binary_snapshot.hpp
+    include/oneplog/internal/log_entry.hpp
+    include/oneplog/internal/format.hpp
+    include/oneplog/internal/pipeline_thread.hpp
+    include/oneplog/internal/writer_thread.hpp
+    include/oneplog/sinks/sink.hpp
     include/oneplog/logger.hpp
     include/oneplog/macros.hpp
     include/oneplog/oneplog.hpp
+    include/oneplog/name_manager.hpp
 )
 
 set(ONEPLOG_SOURCES
