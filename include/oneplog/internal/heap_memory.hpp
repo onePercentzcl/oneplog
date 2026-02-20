@@ -523,6 +523,56 @@ public:
 
         return true;
     }
+    
+    /**
+     * @brief Pop an item for WFC processing
+     * @brief 为 WFC 处理弹出一个项目
+     *
+     * Similar to TryPop but returns the slot index and doesn't call CompleteWFC().
+     * The caller must call MarkWFCComplete(slot) after processing the item.
+     *
+     * 类似于 TryPop，但返回槽位索引且不调用 CompleteWFC()。
+     * 调用者必须在处理完项目后调用 MarkWFCComplete(slot)。
+     *
+     * @param item Output item / 输出项目
+     * @param outSlot Output slot index (-1 if no WFC) / 输出槽位索引（如果没有 WFC 则为 -1）
+     * @return true if an item was popped / 如果弹出了项目则返回 true
+     */
+    template <bool E = EnableWFC, typename = std::enable_if_t<E>>
+    bool TryPopForWFC(T& item, int64_t& outSlot) noexcept {
+        if (!m_header || !m_buffer || !m_slotStatus) { 
+            outSlot = -1;
+            return false; 
+        }
+
+        size_t tail = m_header->tail.load(std::memory_order_relaxed);
+        size_t slot = tail % m_header->capacity;
+
+        if (!m_slotStatus[slot].TryStartRead()) { 
+            outSlot = -1;
+            return false; 
+        }
+
+        item = std::move(m_buffer[slot]);
+
+        bool hasWFC = m_slotStatus[slot].IsWFCEnabled();
+        m_slotStatus[slot].CompleteRead();
+        
+        // Don't call CompleteWFC() here - caller will do it after processing
+        // 不在这里调用 CompleteWFC() - 调用者会在处理后调用
+        outSlot = hasWFC ? static_cast<int64_t>(slot) : -1;
+
+        size_t newTail = tail + 1;
+        m_header->tail.store(newTail, std::memory_order_release);
+
+        if constexpr (EnableShadowTail) {
+            if ((newTail % RingBufferHeader::kShadowTailUpdateInterval) == 0) {
+                m_header->shadowTail.store(newTail, std::memory_order_release);
+            }
+        }
+
+        return true;
+    }
 
     size_t TryPopBatch(std::vector<T>& items, size_t maxCount) noexcept {
         items.clear();

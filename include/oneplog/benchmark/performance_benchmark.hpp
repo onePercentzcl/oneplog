@@ -101,7 +101,7 @@ public:
 
         // Clear existing table
         // 清空现有表
-        detail::GetGlobalThreadModuleTable().Clear();
+        internal::GetGlobalThreadModuleTable().Clear();
 
         // Prepare thread collectors
         // 准备线程收集器
@@ -133,7 +133,7 @@ public:
                     uint32_t tid = baseTid + static_cast<uint32_t>(i % 100);
                     
                     auto opStart = Clock::now();
-                    detail::GetGlobalThreadModuleTable().Register(tid, name);
+                    internal::GetGlobalThreadModuleTable().Register(tid, name);
                     auto opEnd = Clock::now();
 
                     double latencyNs = static_cast<double>(
@@ -211,9 +211,9 @@ public:
 
         // Pre-register some entries
         // 预先注册一些条目
-        detail::GetGlobalThreadModuleTable().Clear();
+        internal::GetGlobalThreadModuleTable().Clear();
         for (uint32_t i = 0; i < 100; ++i) {
-            detail::GetGlobalThreadModuleTable().Register(i, "module_" + std::to_string(i));
+            internal::GetGlobalThreadModuleTable().Register(i, "module_" + std::to_string(i));
         }
 
         std::vector<LatencyCollector> collectors(numThreads);
@@ -239,7 +239,7 @@ public:
                     uint32_t tid = static_cast<uint32_t>(i % 100);
                     
                     auto opStart = Clock::now();
-                    volatile auto name = detail::GetGlobalThreadModuleTable().GetName(tid);
+                    volatile auto name = internal::GetGlobalThreadModuleTable().GetName(tid);
                     (void)name;
                     auto opEnd = Clock::now();
 

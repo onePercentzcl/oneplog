@@ -16,8 +16,9 @@
 #include <sstream>
 #include <fstream>
 
-#include <oneplog/oneplog.hpp>
-#include <oneplog/fast_logger.hpp>
+#include <oneplog/fast_logger_v2.hpp>
+// Note: We use fast_logger_v2.hpp which is the redesigned FastLogger
+// 注意：我们使用 fast_logger_v2.hpp，这是重新设计的 FastLogger
 
 #ifdef HAS_SPDLOG
 #include <spdlog/spdlog.h>
@@ -95,13 +96,67 @@ MultiRunStats CalcMultiRunStats(const std::vector<double>& throughputs) {
 }
 
 // ==============================================================================
-// onePlog Benchmarks using FastLogger / 使用 FastLogger 的 onePlog 测试
+// onePlog Benchmarks using FastLoggerV2 / 使用 FastLoggerV2 的 onePlog 测试
 // ==============================================================================
 
+// Custom config for sync benchmark with NullSink
+using SyncNullConfig = oneplog::FastLoggerConfig<
+    oneplog::Mode::Sync,
+    oneplog::Level::Info,
+    false, true, true,
+    8192, 4096, oneplog::QueueFullPolicy::DropNewest,
+    oneplog::DefaultSharedMemoryName, 10,
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::NullSinkType, oneplog::MessageOnlyFormat>>
+>;
+
+// Custom config for async benchmark with NullSink
+using AsyncNullConfig = oneplog::FastLoggerConfig<
+    oneplog::Mode::Async,
+    oneplog::Level::Info,
+    false, true, true,
+    8192, 4096, oneplog::QueueFullPolicy::DropNewest,
+    oneplog::DefaultSharedMemoryName, 10,
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::NullSinkType, oneplog::MessageOnlyFormat>>
+>;
+
+// Custom config for sync benchmark with FileSink
+using SyncFileConfig = oneplog::FastLoggerConfig<
+    oneplog::Mode::Sync,
+    oneplog::Level::Info,
+    false, true, true,
+    8192, 4096, oneplog::QueueFullPolicy::DropNewest,
+    oneplog::DefaultSharedMemoryName, 10,
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>>
+>;
+
+// Custom config for async benchmark with FileSink
+using AsyncFileConfig = oneplog::FastLoggerConfig<
+    oneplog::Mode::Async,
+    oneplog::Level::Info,
+    false, true, true,
+    8192, 4096, oneplog::QueueFullPolicy::DropNewest,
+    oneplog::DefaultSharedMemoryName, 10,
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>>
+>;
+
+// Custom config for MProc benchmark with NullSink
+struct BenchMProcSharedMemoryName {
+    static constexpr const char* value = "/oneplog_bench_mproc";
+};
+
+using MProcNullConfig = oneplog::FastLoggerConfig<
+    oneplog::Mode::MProc,
+    oneplog::Level::Info,
+    false, true, true,
+    8192, 65536, oneplog::QueueFullPolicy::Block,
+    BenchMProcSharedMemoryName, 10,
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::NullSinkType, oneplog::MessageOnlyFormat>>
+>;
+
 Stats BenchOneplogSync(const Config& cfg) {
-    // Use FastLogger with NullSink for sync benchmark
-    // 使用 FastLogger + NullSink 进行同步测试
-    oneplog::FastLogger<oneplog::Mode::Sync, oneplog::MessageOnlyFormat, oneplog::NullSinkType, oneplog::Level::Info> logger;
+    // Use FastLoggerV2 with NullSink for sync benchmark
+    // 使用 FastLoggerV2 + NullSink 进行同步测试
+    oneplog::FastLoggerV2<SyncNullConfig> logger;
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);
@@ -125,10 +180,14 @@ Stats BenchOneplogSync(const Config& cfg) {
 
 Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
-    // Use FastLogger with FileSink for file benchmark
-    // 使用 FastLogger + FileSink 进行文件测试
-    oneplog::FastLogger<oneplog::Mode::Sync, oneplog::MessageOnlyFormat, oneplog::FileSinkType, oneplog::Level::Info> 
-        logger(oneplog::FileSinkType(filename.c_str()));
+    // Use FastLoggerV2 with FileSink for file benchmark
+    // 使用 FastLoggerV2 + FileSink 进行文件测试
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>> sinks(
+        oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>(
+            oneplog::FileSinkType(filename.c_str())
+        )
+    );
+    oneplog::FastLoggerV2<SyncFileConfig> logger(std::move(sinks));
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);
@@ -153,9 +212,9 @@ Stats BenchOneplogSyncFile(const Config& cfg, const std::string& filename) {
 }
 
 Stats BenchOneplogAsync(const Config& cfg) {
-    // Use FastLogger with NullSink for async benchmark
-    // 使用 FastLogger + NullSink 进行异步测试
-    oneplog::FastLogger<oneplog::Mode::Async, oneplog::MessageOnlyFormat, oneplog::NullSinkType, oneplog::Level::Info> logger;
+    // Use FastLoggerV2 with NullSink for async benchmark
+    // 使用 FastLoggerV2 + NullSink 进行异步测试
+    oneplog::FastLoggerV2<AsyncNullConfig> logger;
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {} {}", i, 3.14159);
@@ -181,10 +240,14 @@ Stats BenchOneplogAsync(const Config& cfg) {
 
 Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
     std::remove(filename.c_str());
-    // Use FastLogger with FileSink for async file benchmark
-    // 使用 FastLogger + FileSink 进行异步文件测试
-    oneplog::FastLogger<oneplog::Mode::Async, oneplog::MessageOnlyFormat, oneplog::FileSinkType, oneplog::Level::Info> 
-        logger(oneplog::FileSinkType(filename.c_str()));
+    // Use FastLoggerV2 with FileSink for async file benchmark
+    // 使用 FastLoggerV2 + FileSink 进行异步文件测试
+    oneplog::SinkBindingList<oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>> sinks(
+        oneplog::SinkBinding<oneplog::FileSinkType, oneplog::MessageOnlyFormat>(
+            oneplog::FileSinkType(filename.c_str())
+        )
+    );
+    oneplog::FastLoggerV2<AsyncFileConfig> logger(std::move(sinks));
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);
@@ -209,36 +272,13 @@ Stats BenchOneplogAsyncFile(const Config& cfg, const std::string& filename) {
 }
 
 // ==============================================================================
-// onePlog MProc Benchmarks (using original Logger) / onePlog 多进程模式测试
+// onePlog MProc Benchmarks using FastLoggerV2 / 使用 FastLoggerV2 的 onePlog 多进程模式测试
 // ==============================================================================
 
-// Simple NullSink for MProc benchmark
-class BenchNullSink : public oneplog::Sink {
-public:
-    void Write(const std::string&) override {}
-    void Flush() override {}
-    void Close() override {}
-    bool HasError() const override { return false; }
-    std::string GetLastError() const override { return ""; }
-};
-
 Stats BenchOneplogMProc(const Config& cfg) {
-    // Use original Logger with MProc mode for benchmark
-    // 使用原始 Logger 的 MProc 模式进行测试
-    oneplog::LoggerConfig config;
-    config.sharedMemoryName = "/oneplog_bench_mproc";
-    config.sharedRingBufferSize = 65536;
-    config.heapRingBufferSize = 8192;
-    config.queueFullPolicy = oneplog::QueueFullPolicy::Block;
-    
-    auto nullSink = std::make_shared<BenchNullSink>();
-    // Use PatternFormat with message-only pattern
-    auto format = std::make_shared<oneplog::PatternFormat>("%m");
-    
-    oneplog::MProcLogger<oneplog::Level::Info, false, false> logger;
-    logger.AddSink(nullSink);
-    logger.SetFormat(format);
-    logger.Init(config);
+    // Use FastLoggerV2 with MProc mode for benchmark
+    // 使用 FastLoggerV2 的 MProc 模式进行测试
+    oneplog::FastLoggerV2<MProcNullConfig> logger;
 
     for (int i = 0; i < cfg.warmup; ++i) {
         logger.Info("Warmup {}", i);

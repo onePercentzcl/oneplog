@@ -908,7 +908,7 @@ using ReleaseLoggerWFC = Logger<Mode::Async, Level::Info, true>;
 // Global Logger / 全局日志器
 // ==============================================================================
 
-namespace detail {
+namespace internal {
 
 template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>>& GetDefaultLoggerPtr() {
@@ -922,18 +922,18 @@ inline std::mutex& GetDefaultLoggerMutex() {
     return mutex;
 }
 
-}  // namespace detail
+}  // namespace internal
 
 template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> DefaultLogger() {
-    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
-    return detail::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>();
+    std::lock_guard<std::mutex> lock(internal::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
+    return internal::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>();
 }
 
 template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
 inline void SetDefaultLogger(std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> logger) {
-    std::lock_guard<std::mutex> lock(detail::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
-    detail::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>() = std::move(logger);
+    std::lock_guard<std::mutex> lock(internal::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
+    internal::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>() = std::move(logger);
 }
 
 // ==============================================================================
@@ -986,7 +986,7 @@ using DefaultLoggerType = Logger<ONEPLOG_DEFAULT_MODE, ONEPLOG_DEFAULT_LEVEL, ON
 // Global Logger Storage / 全局日志器存储
 // ==============================================================================
 
-namespace detail {
+namespace internal {
 
 /**
  * @brief Global default logger instance (type-erased for simplified API)
@@ -1002,7 +1002,7 @@ inline std::mutex& GetGlobalLoggerMutex() {
     return mutex;
 }
 
-}  // namespace detail
+}  // namespace internal
 
 // ==============================================================================
 // Global Convenience Functions / 全局便捷函数
@@ -1053,14 +1053,14 @@ inline void ShutdownLogger() {
  * @endcode
  */
 inline void Init(const LoggerConfig& config = LoggerConfig{}) {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
     
     auto logger = std::make_shared<DefaultLoggerType>();
     logger->SetSink(std::make_shared<ConsoleSink>());
     logger->SetFormat(std::make_shared<ConsoleFormat>());
     logger->Init(config);
     
-    detail::GetGlobalLoggerPtr() = logger;
+    internal::GetGlobalLoggerPtr() = logger;
 }
 
 /**
@@ -1083,14 +1083,14 @@ inline void Init(const LoggerConfig& config = LoggerConfig{}) {
  * @endcode
  */
 inline void InitProducer(const LoggerConfig& config) {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
     
     auto logger = std::make_shared<DefaultLoggerType>();
     // Producer mode: no sink needed, logs go to shared memory
     // 生产者模式：不需要 Sink，日志进入共享内存
     logger->Init(config);
     
-    detail::GetGlobalLoggerPtr() = logger;
+    internal::GetGlobalLoggerPtr() = logger;
 }
 
 /**
@@ -1098,9 +1098,9 @@ inline void InitProducer(const LoggerConfig& config) {
  * @brief 关闭全局日志器
  */
 inline void Shutdown() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
     
-    auto& logger = detail::GetGlobalLoggerPtr();
+    auto& logger = internal::GetGlobalLoggerPtr();
     if (logger) {
         logger->Shutdown();
         logger.reset();
@@ -1112,9 +1112,9 @@ inline void Shutdown() {
  * @brief 刷新全局日志器
  */
 inline void Flush() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
     
-    auto& logger = detail::GetGlobalLoggerPtr();
+    auto& logger = internal::GetGlobalLoggerPtr();
     if (logger) {
         logger->Flush();
     }
@@ -1125,8 +1125,8 @@ inline void Flush() {
  * @brief 获取全局日志器实例
  */
 inline std::shared_ptr<DefaultLoggerType> GetLogger() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
-    return detail::GetGlobalLoggerPtr();
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
+    return internal::GetGlobalLoggerPtr();
 }
 
 /**
@@ -1134,8 +1134,8 @@ inline std::shared_ptr<DefaultLoggerType> GetLogger() {
  * @brief 设置自定义日志器为全局日志器
  */
 inline void SetLogger(std::shared_ptr<DefaultLoggerType> logger) {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalLoggerMutex());
-    detail::GetGlobalLoggerPtr() = std::move(logger);
+    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
+    internal::GetGlobalLoggerPtr() = std::move(logger);
 }
 
 // ==============================================================================

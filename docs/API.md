@@ -3,6 +3,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [FastLogger（推荐）](#fastlogger推荐)
 - [简化接口](#简化接口)
 - [Logger 类](#logger-类)
 - [Sink 类](#sink-类)
@@ -34,6 +35,167 @@ int main() {
     oneplog::Shutdown();
     return 0;
 }
+```
+
+---
+
+## FastLogger（推荐）
+
+FastLogger 是 oneplog 的高性能模板化日志器，通过编译期确定所有类型和配置来实现零虚函数调用开销。
+
+### 基本用法
+
+```cpp
+#include <oneplog/fast_logger.hpp>
+
+int main() {
+    // 使用默认配置（同步模式 + 控制台输出）
+    oneplog::FastLogger<> logger;
+    
+    // 记录日志
+    logger.Info("Hello, {}!", "FastLogger");
+    logger.Debug("Debug value: {}", 42);
+    logger.Error("Error occurred: {}", "something went wrong");
+    
+    // 刷新并关闭
+    logger.Flush();
+    logger.Shutdown();
+    
+    return 0;
+}
+```
+
+### 预设配置
+
+```cpp
+// 同步日志器（直接输出，无后台线程）
+oneplog::SyncLogger syncLogger;
+
+// 异步日志器（后台线程处理，高性能）
+oneplog::AsyncLogger asyncLogger;
+
+// 高性能日志器（用于基准测试）
+oneplog::HighPerformanceLogger benchLogger;
+
+// 带完整格式的日志器
+oneplog::SyncFullLogger fullLogger;
+oneplog::AsyncFullLogger asyncFullLogger;
+```
+
+### 自定义配置
+
+```cpp
+// 自定义模式和级别
+using MyLogger = oneplog::FastLogger<
+    oneplog::Mode::Async,           // 异步模式
+    oneplog::SimpleFormat,          // 简单格式
+    oneplog::ConsoleSinkType,       // 控制台输出
+    oneplog::Level::Debug,          // 最小级别
+    false,                          // 禁用 WFC
+    true                            // 启用 ShadowTail 优化
+>;
+
+MyLogger logger;
+logger.Info("Custom logger message");
+```
+
+### 文件输出
+
+```cpp
+// 使用文件 Sink
+oneplog::FastLogger<
+    oneplog::Mode::Sync,
+    oneplog::SimpleFormat,
+    oneplog::FileSinkType,
+    oneplog::Level::Info
+> fileLogger(oneplog::FileSinkType("/var/log/app.log"));
+
+fileLogger.Info("Writing to file");
+fileLogger.Flush();
+```
+
+### 多 Sink 输出
+
+```cpp
+// 使用 MultiSink 同时输出到多个目标
+auto multiSink = oneplog::MakeSinks(
+    oneplog::ConsoleSinkType{},
+    oneplog::FileSinkType("/var/log/app.log")
+);
+
+oneplog::FastLogger<
+    oneplog::Mode::Sync,
+    oneplog::SimpleFormat,
+    decltype(multiSink),
+    oneplog::Level::Info
+> multiLogger(std::move(multiSink));
+
+multiLogger.Info("Output to both console and file");
+```
+
+### 日志级别
+
+```cpp
+// 编译期级别过滤 - 低于最小级别的日志调用会被完全优化掉
+oneplog::FastLogger<
+    oneplog::Mode::Sync,
+    oneplog::SimpleFormat,
+    oneplog::ConsoleSinkType,
+    oneplog::Level::Warn  // 只记录 Warn 及以上级别
+> warnLogger;
+
+warnLogger.Debug("This won't be compiled");  // 编译期优化掉
+warnLogger.Warn("This will be logged");      // 正常记录
+warnLogger.Error("This will be logged");     // 正常记录
+```
+
+### 格式化器类型
+
+| 格式化器 | 输出格式 | 需要的元数据 |
+|---------|---------|-------------|
+| `MessageOnlyFormat` | `message` | 无 |
+| `SimpleFormat` | `[HH:MM:SS] [LEVEL] message` | 时间戳、级别 |
+| `FullFormat` | `[YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message` | 全部 |
+
+### Sink 类型
+
+| Sink 类型 | 说明 |
+|----------|------|
+| `ConsoleSinkType` | 输出到 stdout |
+| `StderrSinkType` | 输出到 stderr |
+| `FileSinkType` | 输出到文件 |
+| `NullSinkType` | 丢弃所有输出（用于基准测试） |
+
+### 全局 API
+
+```cpp
+#include <oneplog/fast_logger.hpp>
+
+int main() {
+    // 初始化全局 FastLogger
+    oneplog::fast::Init();
+    
+    // 使用全局函数记录日志
+    oneplog::fast::Info("Global FastLogger message");
+    oneplog::fast::Debug("Debug: {}", 42);
+    oneplog::fast::Error("Error: {}", "something wrong");
+    
+    // 刷新并关闭
+    oneplog::fast::Flush();
+    oneplog::fast::Shutdown();
+    
+    return 0;
+}
+```
+
+### 向后兼容
+
+FastLogger 提供了与旧版 Logger 兼容的类型别名：
+
+```cpp
+// 使用 Logger 别名（向后兼容）
+oneplog::Logger<oneplog::Mode::Async, oneplog::Level::Debug> logger;
+logger.Info("Compatible with old API");
 ```
 
 ---

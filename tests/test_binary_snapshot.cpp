@@ -338,6 +338,291 @@ TEST(BinarySnapshotTest, EqualityOperator) {
 }
 
 // ==============================================================================
+// Multi-Parameter Capture Verification Tests / 多参数捕获验证测试
+// ==============================================================================
+
+/**
+ * @brief Test multi-parameter capture with Capture() variadic template
+ * @brief 测试使用 Capture() 变参模板的多参数捕获
+ *
+ * Verifies that Capture() correctly handles multiple parameters and
+ * maintains parameter order.
+ * 验证 Capture() 正确处理多个参数并保持参数顺序。
+ *
+ * _Requirements: 6.4_
+ */
+TEST(BinarySnapshotTest, MultiParameterCaptureOrder) {
+    BinarySnapshot snapshot;
+    
+    // Capture multiple parameters of different types
+    // 捕获多个不同类型的参数
+    EXPECT_TRUE(snapshot.Capture(100, 200, 300));
+    EXPECT_EQ(snapshot.ArgCount(), 3);
+    
+    // Verify order is preserved / 验证顺序保持
+    std::string result = snapshot.Format("{} {} {}");
+    EXPECT_EQ(result, "100 200 300");
+}
+
+/**
+ * @brief Test multi-parameter capture with mixed types
+ * @brief 测试混合类型的多参数捕获
+ *
+ * _Requirements: 6.4_
+ */
+TEST(BinarySnapshotTest, MultiParameterCaptureMixedTypes) {
+    BinarySnapshot snapshot;
+    
+    // Capture mixed types / 捕获混合类型
+    EXPECT_TRUE(snapshot.Capture(42, 3.14, true, "hello"));
+    EXPECT_EQ(snapshot.ArgCount(), 4);
+    
+    // Verify all parameters are captured in order
+    // 验证所有参数按顺序捕获
+    std::string result = snapshot.Format("{} {} {} {}");
+    EXPECT_TRUE(result.find("42") != std::string::npos);
+    EXPECT_TRUE(result.find("3.14") != std::string::npos);
+    EXPECT_TRUE(result.find("true") != std::string::npos);
+    EXPECT_TRUE(result.find("hello") != std::string::npos);
+    
+    // Verify order by checking positions / 通过检查位置验证顺序
+    size_t pos42 = result.find("42");
+    size_t pos314 = result.find("3.14");
+    size_t posTrue = result.find("true");
+    size_t posHello = result.find("hello");
+    EXPECT_LT(pos42, pos314);
+    EXPECT_LT(pos314, posTrue);
+    EXPECT_LT(posTrue, posHello);
+}
+
+/**
+ * @brief Test FormatAll with multiple parameters
+ * @brief 测试 FormatAll 多参数格式化
+ *
+ * Verifies that FormatAll correctly replaces all {} placeholders.
+ * 验证 FormatAll 正确替换所有 {} 占位符。
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllMultipleParameters) {
+    BinarySnapshot snapshot;
+    
+    // First capture format string, then parameters
+    // 首先捕获格式字符串，然后是参数
+    snapshot.CaptureStringView("Value: {} and {} and {}");
+    snapshot.CaptureInt32(1);
+    snapshot.CaptureInt32(2);
+    snapshot.CaptureInt32(3);
+    
+    EXPECT_EQ(snapshot.ArgCount(), 4);
+    
+    // FormatAll should use first arg as format string
+    // FormatAll 应该使用第一个参数作为格式字符串
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "Value: 1 and 2 and 3");
+}
+
+/**
+ * @brief Test FormatAll with mixed type parameters
+ * @brief 测试 FormatAll 混合类型参数
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllMixedTypes) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("int={} bool={} str={}");
+    snapshot.CaptureInt32(42);
+    snapshot.CaptureBool(true);
+    snapshot.CaptureString("test");
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "int=42 bool=true str=test");
+}
+
+/**
+ * @brief Test FormatAll with more placeholders than arguments
+ * @brief 测试 FormatAll 占位符多于参数的情况
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllMorePlaceholdersThanArgs) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("{} {} {} {}");  // 4 placeholders
+    snapshot.CaptureInt32(1);
+    snapshot.CaptureInt32(2);  // Only 2 arguments
+    
+    // Extra placeholders are skipped (not replaced)
+    // 额外的占位符被跳过（不替换）
+    std::string result = snapshot.FormatAll();
+    // The implementation skips {} when no more args available
+    // 当没有更多参数时，实现会跳过 {}
+    EXPECT_EQ(result, "1 2  ");
+}
+
+/**
+ * @brief Test FormatAll with fewer placeholders than arguments
+ * @brief 测试 FormatAll 占位符少于参数的情况
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllFewerPlaceholdersThanArgs) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("{} {}");  // 2 placeholders
+    snapshot.CaptureInt32(1);
+    snapshot.CaptureInt32(2);
+    snapshot.CaptureInt32(3);  // 3 arguments, extra one ignored
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "1 2");
+}
+
+/**
+ * @brief Test FormatAll with no placeholders
+ * @brief 测试 FormatAll 无占位符的情况
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllNoPlaceholders) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("No placeholders here");
+    snapshot.CaptureInt32(42);  // This will be ignored
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "No placeholders here");
+}
+
+/**
+ * @brief Test FormatAll with only format string (no args)
+ * @brief 测试 FormatAll 只有格式字符串（无参数）
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllOnlyFormatString) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("Just a message");
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "Just a message");
+}
+
+/**
+ * @brief Test multi-parameter capture with 5+ parameters
+ * @brief 测试 5 个以上参数的多参数捕获
+ *
+ * _Requirements: 6.4_
+ */
+TEST(BinarySnapshotTest, MultiParameterCaptureFiveOrMore) {
+    BinarySnapshot snapshot;
+    
+    EXPECT_TRUE(snapshot.Capture(1, 2, 3, 4, 5, 6));
+    EXPECT_EQ(snapshot.ArgCount(), 6);
+    
+    std::string result = snapshot.Format("{}-{}-{}-{}-{}-{}");
+    EXPECT_EQ(result, "1-2-3-4-5-6");
+}
+
+/**
+ * @brief Test FormatAll with StringCopy format string
+ * @brief 测试 FormatAll 使用 StringCopy 格式字符串
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllWithStringCopyFormat) {
+    BinarySnapshot snapshot;
+    
+    // Use CaptureString (StringCopy) instead of CaptureStringView
+    // 使用 CaptureString (StringCopy) 而不是 CaptureStringView
+    std::string fmtStr = "Value: {} and {}";
+    snapshot.CaptureString(fmtStr);
+    snapshot.CaptureInt32(100);
+    snapshot.CaptureInt32(200);
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "Value: 100 and 200");
+}
+
+/**
+ * @brief Test FormatAll type conversion for all supported types
+ * @brief 测试 FormatAll 对所有支持类型的类型转换
+ *
+ * Verifies that all {} placeholders are correctly replaced with
+ * properly converted type values.
+ * 验证所有 {} 占位符都被正确替换为正确转换的类型值。
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllTypeConversion) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("i32={} i64={} u32={} u64={} f={} d={} b={}");
+    snapshot.CaptureInt32(-42);
+    snapshot.CaptureInt64(-9876543210LL);
+    snapshot.CaptureUInt32(4000000000U);
+    snapshot.CaptureUInt64(18446744073709551615ULL);
+    snapshot.CaptureFloat(3.14f);
+    snapshot.CaptureDouble(2.71828);
+    snapshot.CaptureBool(false);
+    
+    std::string result = snapshot.FormatAll();
+    
+    // Verify each type is correctly converted
+    // 验证每种类型都被正确转换
+    EXPECT_TRUE(result.find("i32=-42") != std::string::npos);
+    EXPECT_TRUE(result.find("i64=-9876543210") != std::string::npos);
+    EXPECT_TRUE(result.find("u32=4000000000") != std::string::npos);
+    EXPECT_TRUE(result.find("u64=18446744073709551615") != std::string::npos);
+    EXPECT_TRUE(result.find("f=3.14") != std::string::npos);
+    EXPECT_TRUE(result.find("d=2.71") != std::string::npos);
+    EXPECT_TRUE(result.find("b=false") != std::string::npos);
+}
+
+/**
+ * @brief Test FormatAll with string arguments
+ * @brief 测试 FormatAll 字符串参数
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllStringArguments) {
+    BinarySnapshot snapshot;
+    
+    snapshot.CaptureStringView("name={} msg={}");
+    snapshot.CaptureString("Alice");  // StringCopy
+    std::string_view sv = "Hello World";
+    snapshot.CaptureStringView(sv);   // StringView
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "name=Alice msg=Hello World");
+}
+
+/**
+ * @brief Test FormatAll placeholder replacement completeness
+ * @brief 测试 FormatAll 占位符替换完整性
+ *
+ * Verifies that ALL {} placeholders are replaced when enough arguments exist.
+ * 验证当有足够参数时，所有 {} 占位符都被替换。
+ *
+ * _Requirements: 6.5_
+ */
+TEST(BinarySnapshotTest, FormatAllPlaceholderCompleteness) {
+    BinarySnapshot snapshot;
+    
+    // 10 placeholders with 10 arguments
+    // 10 个占位符和 10 个参数
+    snapshot.CaptureStringView("{}{}{}{}{}{}{}{}{}{}");
+    for (int i = 0; i < 10; ++i) {
+        snapshot.CaptureInt32(i);
+    }
+    
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "0123456789");
+}
+
+// ==============================================================================
 // Property-Based Tests / 属性测试
 // ==============================================================================
 
@@ -477,6 +762,138 @@ RC_GTEST_PROP(BinarySnapshotPropertyTest, NeverExceedsCapacity, ()) {
 }
 
 #endif  // ONEPLOG_HAS_RAPIDCHECK
+
+// ==============================================================================
+// Task 9.1: String Ownership Verification Tests / 字符串所有权验证测试
+// ==============================================================================
+
+/**
+ * @brief Test that std::string is captured with StringCopy (inline copy)
+ * @brief 测试 std::string 使用 StringCopy（内联拷贝）捕获
+ *
+ * Verifies that dynamic strings are copied into the snapshot buffer,
+ * not just referenced by pointer.
+ *
+ * 验证动态字符串被拷贝到快照缓冲区中，而不仅仅是通过指针引用。
+ *
+ * _Requirements: 8.2, 8.3_
+ */
+TEST(BinarySnapshotOwnershipTest, StdStringIsCopied) {
+    BinarySnapshot snapshot;
+    
+    {
+        std::string dynamicStr = "This string will be destroyed";
+        EXPECT_TRUE(snapshot.CaptureString(dynamicStr));
+        // dynamicStr destroyed here
+    }
+    
+    // Format should still work because data was copied
+    std::string result = snapshot.Format("{}");
+    EXPECT_EQ(result, "This string will be destroyed");
+}
+
+/**
+ * @brief Test that const char* is captured with StringCopy (inline copy)
+ * @brief 测试 const char* 使用 StringCopy（内联拷贝）捕获
+ *
+ * _Requirements: 8.2, 8.3_
+ */
+TEST(BinarySnapshotOwnershipTest, CharPointerIsCopied) {
+    BinarySnapshot snapshot;
+    
+    {
+        char buffer[64] = "Temporary buffer";
+        EXPECT_TRUE(snapshot.CaptureString(buffer));
+        // Modify buffer to verify copy was made
+        std::memset(buffer, 'X', sizeof(buffer) - 1);
+    }
+    
+    // Format should return original content
+    std::string result = snapshot.Format("{}");
+    EXPECT_EQ(result, "Temporary buffer");
+}
+
+/**
+ * @brief Test that Capture() variadic template uses correct capture method
+ * @brief 测试 Capture() 变参模板使用正确的捕获方法
+ *
+ * Verifies that std::string passed through Capture() is copied.
+ *
+ * 验证通过 Capture() 传递的 std::string 被拷贝。
+ *
+ * _Requirements: 8.2, 8.3_
+ */
+TEST(BinarySnapshotOwnershipTest, CaptureVariadicCopiesStrings) {
+    BinarySnapshot snapshot;
+    
+    {
+        std::string str1 = "First string";
+        std::string str2 = "Second string";
+        EXPECT_TRUE(snapshot.Capture(str1, 42, str2));
+        // Strings destroyed here
+    }
+    
+    // Format should work correctly
+    std::string result = snapshot.Format("{} {} {}");
+    EXPECT_EQ(result, "First string 42 Second string");
+}
+
+/**
+ * @brief Test string ownership after ConvertPointersToData
+ * @brief 测试 ConvertPointersToData 后的字符串所有权
+ *
+ * Verifies that StringView pointers are converted to StringCopy.
+ *
+ * 验证 StringView 指针被转换为 StringCopy。
+ *
+ * _Requirements: 8.2, 8.3_
+ */
+TEST(BinarySnapshotOwnershipTest, ConvertPointersPreservesData) {
+    BinarySnapshot snapshot;
+    
+    {
+        std::string_view sv = "Static string view";
+        snapshot.CaptureStringView(sv);
+        // sv still valid here
+    }
+    
+    // Convert pointers to data (simulates cross-process transfer)
+    snapshot.ConvertPointersToData();
+    
+    // Format should still work after conversion
+    std::string result = snapshot.Format("{}");
+    EXPECT_EQ(result, "Static string view");
+}
+
+/**
+ * @brief Test FormatAll with destroyed source strings
+ * @brief 测试源字符串销毁后的 FormatAll
+ *
+ * Verifies that FormatAll works correctly even after source strings
+ * are destroyed, because StringCopy was used.
+ *
+ * 验证即使源字符串被销毁后 FormatAll 仍能正确工作，因为使用了 StringCopy。
+ *
+ * _Requirements: 8.2, 8.3_
+ */
+TEST(BinarySnapshotOwnershipTest, FormatAllWithDestroyedStrings) {
+    BinarySnapshot snapshot;
+    
+    {
+        std::string fmtStr = "Value: {} Name: {}";
+        std::string nameStr = "TestName";
+        
+        // Use CaptureString for format string (StringCopy)
+        snapshot.CaptureString(fmtStr);
+        snapshot.CaptureInt32(42);
+        snapshot.CaptureString(nameStr);
+        // Strings destroyed here
+    }
+    
+    // FormatAll should work correctly
+    std::string result = snapshot.FormatAll();
+    EXPECT_EQ(result, "Value: 42 Name: TestName");
+}
 
 }  // namespace test
 }  // namespace oneplog

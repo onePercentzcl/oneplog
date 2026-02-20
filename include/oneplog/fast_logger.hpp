@@ -3,38 +3,54 @@
  * @brief High-performance template-based Logger with compile-time optimization
  * @brief 高性能模板化日志器，支持编译期优化
  *
+ * This header can be used independently without external macro definitions.
+ * All required dependencies are included automatically.
+ *
+ * 此头文件可独立使用，无需外部宏定义。
+ * 所有必需的依赖项会自动包含。
+ *
  * Features:
  * - Compile-time Format and Sink type resolution (no virtual calls)
  * - Multi-sink support via variadic templates
  * - Sync/Async mode support
  * - Zero-overhead level filtering
+ * - Works with or without fmt library (ONEPLOG_USE_FMT)
  *
  * @copyright Copyright (c) 2024 onePlog
  */
 
 #pragma once
 
+// Standard library includes
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstring>
+#include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+// Internal dependencies - these are always required
 #include "oneplog/common.hpp"
 #include "oneplog/internal/log_entry.hpp"
 #include "oneplog/internal/heap_memory.hpp"
 
+// Optional fmt library support
+// If ONEPLOG_USE_FMT is defined, fmt library will be used for formatting
+// Otherwise, BinarySnapshot-based fallback formatting is used
 #ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
 #endif
 
+// Platform-specific includes for thread/process ID
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -62,10 +78,16 @@ struct StaticFormatRequirements {
 // ==============================================================================
 
 /// Message only format (like spdlog's %v)
+/// 仅消息格式（类似 spdlog 的 %v）
 struct MessageOnlyFormat {
+    /// Format requirements - no metadata needed / 格式化需求 - 不需要元数据
     using Requirements = StaticFormatRequirements<false, false, false, false>;
 
 #ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Format to buffer using fmt library (sync mode)
+     * @brief 使用 fmt 库格式化到缓冲区（同步模式）
+     */
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level, uint64_t, uint32_t, uint32_t,
                          const char* fmt, Args&&... args) {
@@ -76,19 +98,64 @@ struct MessageOnlyFormat {
         }
     }
     
-    // Format from LogEntry (for async mode)
+    /**
+     * @brief Format LogEntry to buffer using fmt library (async mode)
+     * @brief 使用 fmt 库将 LogEntry 格式化到缓冲区（异步模式）
+     */
     static void FormatEntryTo(fmt::memory_buffer& buffer, const LogEntry& entry) {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
 #endif
+
+    // =========================================================================
+    // Non-fmt fallback implementations / 非 fmt 回退实现
+    // =========================================================================
+    
+    /**
+     * @brief Format LogEntry to string without fmt library (async mode)
+     * @brief 不使用 fmt 库将 LogEntry 格式化为字符串（异步模式）
+     * 
+     * @param entry The log entry / 日志条目
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.3_
+     */
+    static std::string FormatEntry(const LogEntry& entry) {
+        return entry.snapshot.FormatAll();
+    }
+    
+    /**
+     * @brief Format with metadata to string without fmt library (sync mode)
+     * @brief 不使用 fmt 库将带元数据的内容格式化为字符串（同步模式）
+     * 
+     * @param level Log level (unused) / 日志级别（未使用）
+     * @param timestamp Timestamp (unused) / 时间戳（未使用）
+     * @param threadId Thread ID (unused) / 线程 ID（未使用）
+     * @param processId Process ID (unused) / 进程 ID（未使用）
+     * @param snapshot The binary snapshot / 二进制快照
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.2_
+     */
+    static std::string FormatEntry(Level /*level*/, uint64_t /*timestamp*/, 
+                                   uint32_t /*threadId*/, uint32_t /*processId*/,
+                                   const BinarySnapshot& snapshot) {
+        return snapshot.FormatAll();
+    }
 };
 
 /// Simple format: [HH:MM:SS] [LEVEL] message
+/// 简单格式：[HH:MM:SS] [LEVEL] message
 struct SimpleFormat {
+    /// Format requirements - needs timestamp and level / 格式化需求 - 需要时间戳和级别
     using Requirements = StaticFormatRequirements<true, true, false, false>;
 
 #ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Format to buffer using fmt library (sync mode)
+     * @brief 使用 fmt 库格式化到缓冲区（同步模式）
+     */
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level level, uint64_t timestamp,
                          uint32_t, uint32_t, const char* fmt, Args&&... args) {
@@ -108,7 +175,10 @@ struct SimpleFormat {
         }
     }
     
-    // Format from LogEntry (for async mode)
+    /**
+     * @brief Format LogEntry to buffer using fmt library (async mode)
+     * @brief 使用 fmt 库将 LogEntry 格式化到缓冲区（异步模式）
+     */
     static void FormatEntryTo(fmt::memory_buffer& buffer, const LogEntry& entry) {
         auto seconds = static_cast<time_t>(entry.timestamp / 1000000000ULL);
         std::tm tm{};
@@ -124,13 +194,80 @@ struct SimpleFormat {
         buffer.append(std::string_view(msg));
     }
 #endif
+
+    // =========================================================================
+    // Non-fmt fallback implementations / 非 fmt 回退实现
+    // =========================================================================
+    
+    /**
+     * @brief Format LogEntry to string without fmt library (async mode)
+     * @brief 不使用 fmt 库将 LogEntry 格式化为字符串（异步模式）
+     * 
+     * @param entry The log entry / 日志条目
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.3_
+     */
+    static std::string FormatEntry(const LogEntry& entry) {
+        return FormatEntry(entry.level, entry.timestamp, 0, 0, entry.snapshot);
+    }
+    
+    /**
+     * @brief Format with metadata to string without fmt library (sync mode)
+     * @brief 不使用 fmt 库将带元数据的内容格式化为字符串（同步模式）
+     * 
+     * @param level Log level / 日志级别
+     * @param timestamp Nanosecond timestamp / 纳秒时间戳
+     * @param threadId Thread ID (unused) / 线程 ID（未使用）
+     * @param processId Process ID (unused) / 进程 ID（未使用）
+     * @param snapshot The binary snapshot / 二进制快照
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.2_
+     */
+    static std::string FormatEntry(Level level, uint64_t timestamp, 
+                                   uint32_t /*threadId*/, uint32_t /*processId*/,
+                                   const BinarySnapshot& snapshot) {
+        std::string result;
+        result.reserve(256);
+        
+        // Format timestamp as [HH:MM:SS]
+        auto seconds = static_cast<time_t>(timestamp / 1000000000ULL);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &seconds);
+#else
+        localtime_r(&seconds, &tm);
+#endif
+        
+        char timeBuf[16];
+        std::snprintf(timeBuf, sizeof(timeBuf), "[%02d:%02d:%02d]", 
+                      tm.tm_hour, tm.tm_min, tm.tm_sec);
+        result += timeBuf;
+        
+        // Format level as [LEVEL]
+        result += " [";
+        result += LevelToString(level, LevelNameStyle::Short4);
+        result += "] ";
+        
+        // Append message
+        result += snapshot.FormatAll();
+        
+        return result;
+    }
 };
 
 /// Full format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message
+/// 完整格式：[YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message
 struct FullFormat {
+    /// Format requirements - needs all metadata / 格式化需求 - 需要所有元数据
     using Requirements = StaticFormatRequirements<true, true, true, true>;
 
 #ifdef ONEPLOG_USE_FMT
+    /**
+     * @brief Format to buffer using fmt library (sync mode)
+     * @brief 使用 fmt 库格式化到缓冲区（同步模式）
+     */
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level level, uint64_t timestamp,
                          uint32_t threadId, uint32_t processId, const char* fmt, Args&&... args) {
@@ -154,7 +291,10 @@ struct FullFormat {
         }
     }
     
-    // Format from LogEntry (for async mode)
+    /**
+     * @brief Format LogEntry to buffer using fmt library (async mode)
+     * @brief 使用 fmt 库将 LogEntry 格式化到缓冲区（异步模式）
+     */
     static void FormatEntryTo(fmt::memory_buffer& buffer, const LogEntry& entry) {
         auto seconds = static_cast<time_t>(entry.timestamp / 1000000000ULL);
         auto millis = static_cast<uint32_t>((entry.timestamp % 1000000000ULL) / 1000000);
@@ -174,6 +314,75 @@ struct FullFormat {
         buffer.append(std::string_view(msg));
     }
 #endif
+
+    // =========================================================================
+    // Non-fmt fallback implementations / 非 fmt 回退实现
+    // =========================================================================
+    
+    /**
+     * @brief Format LogEntry to string without fmt library (async mode)
+     * @brief 不使用 fmt 库将 LogEntry 格式化为字符串（异步模式）
+     * 
+     * @param entry The log entry / 日志条目
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.3_
+     */
+    static std::string FormatEntry(const LogEntry& entry) {
+        return FormatEntry(entry.level, entry.timestamp, entry.threadId, 
+                          entry.processId, entry.snapshot);
+    }
+    
+    /**
+     * @brief Format with metadata to string without fmt library (sync mode)
+     * @brief 不使用 fmt 库将带元数据的内容格式化为字符串（同步模式）
+     * 
+     * @param level Log level / 日志级别
+     * @param timestamp Nanosecond timestamp / 纳秒时间戳
+     * @param threadId Thread ID / 线程 ID
+     * @param processId Process ID / 进程 ID
+     * @param snapshot The binary snapshot / 二进制快照
+     * @return Formatted string / 格式化后的字符串
+     * 
+     * _Requirements: 7.3, 7.4, 9.2_
+     */
+    static std::string FormatEntry(Level level, uint64_t timestamp, 
+                                   uint32_t threadId, uint32_t processId,
+                                   const BinarySnapshot& snapshot) {
+        std::string result;
+        result.reserve(512);
+        
+        // Format timestamp as [YYYY-MM-DD HH:MM:SS.mmm]
+        auto seconds = static_cast<time_t>(timestamp / 1000000000ULL);
+        auto millis = static_cast<uint32_t>((timestamp % 1000000000ULL) / 1000000);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &seconds);
+#else
+        localtime_r(&seconds, &tm);
+#endif
+        
+        char timeBuf[32];
+        std::snprintf(timeBuf, sizeof(timeBuf), "[%04d-%02d-%02d %02d:%02d:%02d.%03u]",
+                      tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                      tm.tm_hour, tm.tm_min, tm.tm_sec, millis);
+        result += timeBuf;
+        
+        // Format level as [LEVEL]
+        result += " [";
+        result += LevelToString(level, LevelNameStyle::Short4);
+        result += "] ";
+        
+        // Format process and thread IDs as [PID:TID]
+        char idBuf[32];
+        std::snprintf(idBuf, sizeof(idBuf), "[%u:%u] ", processId, threadId);
+        result += idBuf;
+        
+        // Append message
+        result += snapshot.FormatAll();
+        
+        return result;
+    }
 };
 
 // ==============================================================================
@@ -266,7 +475,7 @@ MultiSink<Sinks...> MakeSinks(Sinks... sinks) {
 // Helper Functions / 辅助函数
 // ==============================================================================
 
-namespace detail {
+namespace internal {
 
 inline uint64_t GetNanosecondTimestamp() noexcept {
     auto now = std::chrono::system_clock::now();
@@ -294,7 +503,7 @@ inline uint32_t GetCurrentProcessId() noexcept {
 #endif
 }
 
-}  // namespace detail
+}  // namespace internal
 
 // ==============================================================================
 // FastLogger Class / 快速日志器类
@@ -472,15 +681,25 @@ private:
         [[maybe_unused]] uint32_t processId = 0;
 
         // Compile-time conditional: only get what format needs
-        if constexpr (Req::kNeedsTimestamp) timestamp = detail::GetNanosecondTimestamp();
-        if constexpr (Req::kNeedsThreadId) threadId = detail::GetCurrentThreadId();
-        if constexpr (Req::kNeedsProcessId) processId = detail::GetCurrentProcessId();
+        if constexpr (Req::kNeedsTimestamp) timestamp = internal::GetNanosecondTimestamp();
+        if constexpr (Req::kNeedsThreadId) threadId = internal::GetCurrentThreadId();
+        if constexpr (Req::kNeedsProcessId) processId = internal::GetCurrentProcessId();
 
 #ifdef ONEPLOG_USE_FMT
         fmt::memory_buffer buffer;
         FormatType::FormatTo(buffer, LogLevel, timestamp, threadId, processId,
                              fmt, std::forward<Args>(args)...);
         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
+#else
+        // Non-fmt fallback: use BinarySnapshot for formatting
+        BinarySnapshot snapshot;
+        snapshot.CaptureStringView(std::string_view(fmt));
+        if constexpr (sizeof...(Args) > 0) {
+            snapshot.Capture(std::forward<Args>(args)...);
+        }
+        std::string msg = FormatType::FormatEntry(LogLevel, timestamp, threadId, 
+                                                   processId, snapshot);
+        m_sink.Write(msg);
 #endif
     }
 
@@ -489,15 +708,15 @@ private:
         if (!m_ringBuffer) return;
 
         LogEntry entry;
-        entry.timestamp = detail::GetNanosecondTimestamp();
+        entry.timestamp = internal::GetNanosecondTimestamp();
         entry.level = LogLevel;
         
         // Compile-time conditional: only get what format needs
         if constexpr (Req::kNeedsThreadId) {
-            entry.threadId = detail::GetCurrentThreadId();
+            entry.threadId = internal::GetCurrentThreadId();
         }
         if constexpr (Req::kNeedsProcessId) {
-            entry.processId = detail::GetCurrentProcessId();
+            entry.processId = internal::GetCurrentProcessId();
         }
 
         // Capture format string and arguments to BinarySnapshot
@@ -533,6 +752,10 @@ private:
                         fmt::memory_buffer buffer;
                         FormatType::FormatEntryTo(buffer, entry);
                         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
+#else
+                        // Non-fmt fallback: use FormatEntry method
+                        std::string msg = FormatType::FormatEntry(entry);
+                        m_sink.Write(msg);
 #endif
                         hasData = true;
                     }
@@ -554,6 +777,10 @@ private:
                         fmt::memory_buffer buffer;
                         FormatType::FormatEntryTo(buffer, entry);
                         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
+#else
+                        // Non-fmt fallback: use FormatEntry method
+                        std::string msg = FormatType::FormatEntry(entry);
+                        m_sink.Write(msg);
 #endif
                     }
                 }
@@ -592,6 +819,10 @@ private:
                     fmt::memory_buffer buffer;
                     FormatType::FormatEntryTo(buffer, entry);
                     m_sink.Write(std::string_view(buffer.data(), buffer.size()));
+#else
+                    // Non-fmt fallback: use FormatEntry method
+                    std::string msg = FormatType::FormatEntry(entry);
+                    m_sink.Write(msg);
 #endif
                 }
             }
@@ -646,6 +877,76 @@ using FastAsyncFileLogger = FastLogger<Mode::Async, SimpleFormat, FileSinkType, 
 using BenchmarkLogger = FastLogger<Mode::Sync, MessageOnlyFormat, NullSinkType, Level::Info>;
 
 // ==============================================================================
+// Backward Compatibility Type Aliases / 向后兼容类型别名
+// ==============================================================================
+
+/**
+ * @brief Simplified type aliases for common use cases
+ * @brief 常用场景的简化类型别名
+ *
+ * These aliases provide backward compatibility with existing code and
+ * simplify the migration to the new FastLogger API.
+ *
+ * 这些别名提供与现有代码的向后兼容性，并简化向新 FastLogger API 的迁移。
+ *
+ * _Requirements: 1.7, 14.5_
+ */
+
+/// Sync logger with console output / 同步日志器，控制台输出
+using SyncLogger = FastLogger<Mode::Sync, SimpleFormat, ConsoleSinkType, Level::Info>;
+
+/// Async logger with console output / 异步日志器，控制台输出
+using AsyncLogger = FastLogger<Mode::Async, SimpleFormat, ConsoleSinkType, Level::Info>;
+
+/// Sync logger with full format / 同步日志器，完整格式
+using SyncFullLogger = FastLogger<Mode::Sync, FullFormat, ConsoleSinkType, Level::Info>;
+
+/// Async logger with full format / 异步日志器，完整格式
+using AsyncFullLogger = FastLogger<Mode::Async, FullFormat, ConsoleSinkType, Level::Info>;
+
+/// High performance logger (null sink, message only) / 高性能日志器（空 Sink，仅消息）
+using HighPerformanceLogger = FastLogger<Mode::Async, MessageOnlyFormat, NullSinkType, Level::Info>;
+
+/**
+ * @brief Default compile-time log level based on build configuration
+ * @brief 基于构建配置的默认编译期日志级别
+ *
+ * In Debug mode (NDEBUG not defined): Level::Debug
+ * In Release mode (NDEBUG defined): Level::Info
+ */
+#ifndef ONEPLOG_DEFAULT_LEVEL_DEFINED_FAST
+#define ONEPLOG_DEFAULT_LEVEL_DEFINED_FAST
+#ifdef NDEBUG
+constexpr Level kFastDefaultLevel = Level::Info;
+#else
+constexpr Level kFastDefaultLevel = Level::Debug;
+#endif
+#endif
+
+/**
+ * @brief Generic Logger type alias for backward compatibility
+ * @brief 用于向后兼容的通用 Logger 类型别名
+ *
+ * This template alias allows existing code using Logger<Mode, Level, ...>
+ * to continue working with the new FastLogger implementation.
+ *
+ * 此模板别名允许使用 Logger<Mode, Level, ...> 的现有代码
+ * 继续使用新的 FastLogger 实现。
+ *
+ * @tparam M Operating mode (Sync/Async) / 运行模式
+ * @tparam L Minimum log level / 最小日志级别
+ * @tparam EnableWFC Enable WFC functionality (unused in this version) / 启用 WFC 功能（此版本未使用）
+ * @tparam EnableShadowTail Enable shadow tail optimization (unused in this version) / 启用影子尾指针优化（此版本未使用）
+ *
+ * _Requirements: 14.5_
+ */
+template<Mode M = Mode::Async, 
+         Level L = kFastDefaultLevel,
+         bool EnableWFC = false, 
+         bool EnableShadowTail = true>
+using Logger = FastLogger<M, SimpleFormat, ConsoleSinkType, L, EnableWFC, EnableShadowTail>;
+
+// ==============================================================================
 // Default FastLogger / 默认快速日志器
 // ==============================================================================
 
@@ -665,7 +966,7 @@ using DefaultFastLogger = FastLogger<ONEPLOG_FAST_DEFAULT_MODE, SimpleFormat, Co
 
 namespace fast {
 
-namespace detail {
+namespace internal {
 inline std::unique_ptr<DefaultFastLogger>& GetGlobalLogger() {
     static std::unique_ptr<DefaultFastLogger> logger;
     return logger;
@@ -674,58 +975,58 @@ inline std::mutex& GetGlobalMutex() {
     static std::mutex mtx;
     return mtx;
 }
-}  // namespace detail
+}  // namespace internal
 
 // ==============================================================================
 // Global API / 全局 API
 // ==============================================================================
 
 inline void Init() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalMutex());
-    detail::GetGlobalLogger() = std::make_unique<DefaultFastLogger>();
+    std::lock_guard<std::mutex> lock(internal::GetGlobalMutex());
+    internal::GetGlobalLogger() = std::make_unique<DefaultFastLogger>();
 }
 
 inline void Shutdown() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalMutex());
-    if (detail::GetGlobalLogger()) {
-        detail::GetGlobalLogger()->Shutdown();
-        detail::GetGlobalLogger().reset();
+    std::lock_guard<std::mutex> lock(internal::GetGlobalMutex());
+    if (internal::GetGlobalLogger()) {
+        internal::GetGlobalLogger()->Shutdown();
+        internal::GetGlobalLogger().reset();
     }
 }
 
 inline void Flush() {
-    std::lock_guard<std::mutex> lock(detail::GetGlobalMutex());
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Flush();
+    std::lock_guard<std::mutex> lock(internal::GetGlobalMutex());
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Flush();
 }
 
 template<typename... Args>
 inline void Trace(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Trace(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Trace(fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
 inline void Debug(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Debug(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Debug(fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
 inline void Info(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Info(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Info(fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
 inline void Warn(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Warn(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Warn(fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
 inline void Error(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Error(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Error(fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
 inline void Critical(const char* fmt, Args&&... args) {
-    if (detail::GetGlobalLogger()) detail::GetGlobalLogger()->Critical(fmt, std::forward<Args>(args)...);
+    if (internal::GetGlobalLogger()) internal::GetGlobalLogger()->Critical(fmt, std::forward<Args>(args)...);
 }
 
 }  // namespace fast

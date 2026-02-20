@@ -840,29 +840,34 @@ xmake run stress_test -- -b 10000
 | HeapRingBuffer 入队/出队 | 2662 万 ops/sec | 25 ns | 125 ns |
 | 格式化 | 277 万 ops/sec | 336 ns | 459 ns |
 
-### 与 spdlog 性能对比
+### FastLoggerV2 与 spdlog 性能对比
 
-使用相同输出格式（仅消息）进行公平对比，结果为 100 次运行的平均值 ± 标准差：
+FastLoggerV2 是重新设计的高性能日志器，使用编译期配置和 SinkBindingList 实现零虚函数调用开销。
 
-| 测试项 | onePlog | spdlog | 对比 |
-|--------|---------|--------|------|
-| 同步模式（Null Sink） | 1513 万 ± 96 万 ops/sec | 1510 万 ± 61 万 ops/sec | +0.2% |
-| 异步模式（单线程） | 1937 万 ± 156 万 ops/sec | 484 万 ± 42 万 ops/sec | +300% |
-| 异步模式（4线程） | 881 万 ± 56 万 ops/sec | 315 万 ± 4 万 ops/sec | +180% |
-| 同步文件输出 | 1010 万 ± 13 万 ops/sec | 877 万 ± 24 万 ops/sec | +15% |
-| 异步文件输出 | 1947 万 ± 23 万 ops/sec | 499 万 ± 10 万 ops/sec | +290% |
-| 异步文件（4线程） | 931 万 ± 53 万 ops/sec | 343 万 ± 3 万 ops/sec | +172% |
+使用相同输出格式（仅消息）进行公平对比，结果为多次运行的平均值 ± 标准差：
+
+| 测试项 | onePlog FastLoggerV2 | spdlog | 对比 |
+|--------|---------------------|--------|------|
+| 同步模式（Null Sink） | 1658 万 ± 45 万 ops/sec | 1652 万 ± 44 万 ops/sec | +0.4% |
+| 同步模式（File Sink） | 1036 万 ± 14 万 ops/sec | 860 万 ± 20 万 ops/sec | +20% |
+| 异步模式（Null Sink） | 1797 万 ± 10 万 ops/sec | 469 万 ± 20 万 ops/sec | +283% |
+| 异步模式（File Sink） | 1796 万 ± 61 万 ops/sec | 480 万 ± 4 万 ops/sec | +274% |
 
 **关键优化**：
-- 同步模式使用 `fmt::memory_buffer` 栈缓冲区，实现零堆分配
-- 异步模式使用无锁环形队列，高并发场景性能优异
-- 格式化器按需获取元数据（线程ID、进程ID等）
+- 编译期配置：通过 `FastLoggerConfig` 模板参数在编译时确定所有配置
+- SinkBindingList：多 Sink 绑定，编译期计算元数据需求并集
+- 条件通知：使用 `NotifyConsumerIfWaiting()` 仅在消费者等待时发送通知，避免不必要的系统调用
+- 按需获取元数据：根据 Format 需求决定是否获取 TID/PID 等
 
 运行性能测试：
 ```bash
-xmake f -m release
-xmake -r benchmark_compare
-./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
+# 编译（需要 fmt 库）
+clang++ -std=c++17 -O3 -I include -I /opt/homebrew/opt/fmt/include \
+    -DONEPLOG_USE_FMT -DFMT_HEADER_ONLY \
+    -o benchmark_compare example/benchmark_compare.cpp -lpthread
+
+# 运行（与 spdlog 对比需要 -DHAS_SPDLOG 和 spdlog 头文件）
+./benchmark_compare -i 100000 -r 5
 ```
 
 ### WFC 编译时开销测试

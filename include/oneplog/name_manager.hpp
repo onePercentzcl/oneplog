@@ -93,14 +93,14 @@ inline constexpr bool kUseOptimizedLookup = ONEPLOG_USE_OPTIMIZED_LOOKUP;
  * This should be set once at program startup and never changed.
  * 应该在程序启动时设置一次，之后不再改变。
  */
-namespace detail {
+namespace internal {
 
 inline std::string& GetGlobalProcessName() {
     static std::string processName = "main";
     return processName;
 }
 
-}  // namespace detail
+}  // namespace internal
 
 /**
  * @brief Set global process name (call once at startup)
@@ -109,9 +109,9 @@ inline std::string& GetGlobalProcessName() {
  */
 inline void SetProcessName(const std::string& name) {
     if (name.length() > config::kMaxNameLength) {
-        detail::GetGlobalProcessName() = name.substr(0, config::kMaxNameLength);
+        internal::GetGlobalProcessName() = name.substr(0, config::kMaxNameLength);
     } else {
-        detail::GetGlobalProcessName() = name;
+        internal::GetGlobalProcessName() = name;
     }
 }
 
@@ -120,14 +120,14 @@ inline void SetProcessName(const std::string& name) {
  * @brief 获取全局进程名
  */
 inline const std::string& GetProcessName() {
-    return detail::GetGlobalProcessName();
+    return internal::GetGlobalProcessName();
 }
 
 // ==============================================================================
 // Thread-local Module Name / 线程局部模块名
 // ==============================================================================
 
-namespace detail {
+namespace internal {
 
 /**
  * @brief Get thread-local module name
@@ -167,7 +167,7 @@ inline std::atomic<bool>& GetAutoRegisterFlag() {
     return autoRegister;
 }
 
-}  // namespace detail
+}  // namespace internal
 
 // Forward declaration for RegisterModuleName
 inline void RegisterModuleName();
@@ -182,14 +182,14 @@ inline void RegisterModuleName();
  */
 inline void SetModuleName(const std::string& name) {
     if (name.length() > config::kMaxNameLength) {
-        detail::GetTlsModuleName() = name.substr(0, config::kMaxNameLength);
+        internal::GetTlsModuleName() = name.substr(0, config::kMaxNameLength);
     } else {
-        detail::GetTlsModuleName() = name;
+        internal::GetTlsModuleName() = name;
     }
     
     // Auto-register to global table if enabled (Async/MProc mode)
     // 如果启用了自动注册（Async/MProc 模式），则自动注册到全局表
-    if (detail::GetAutoRegisterFlag().load(std::memory_order_acquire)) {
+    if (internal::GetAutoRegisterFlag().load(std::memory_order_acquire)) {
         RegisterModuleName();
     }
 }
@@ -199,7 +199,7 @@ inline void SetModuleName(const std::string& name) {
  * @brief 获取当前线程的模块名
  */
 inline const std::string& GetModuleName() {
-    return detail::GetTlsModuleName();
+    return internal::GetTlsModuleName();
 }
 
 /**
@@ -210,7 +210,7 @@ inline const std::string& GetModuleName() {
  * 由 Logger::Init() 根据模式调用。
  */
 inline void SetAutoRegisterModuleName(bool enable) {
-    detail::GetAutoRegisterFlag().store(enable, std::memory_order_release);
+    internal::GetAutoRegisterFlag().store(enable, std::memory_order_release);
 }
 
 // ==============================================================================
@@ -350,14 +350,14 @@ private:
 // Global ThreadModuleTable for Async Mode / 异步模式的全局 TID-模块名表
 // ==============================================================================
 
-namespace detail {
+namespace internal {
 
 inline ThreadModuleTable& GetGlobalThreadModuleTable() {
     static ThreadModuleTable table;
     return table;
 }
 
-}  // namespace detail
+}  // namespace internal
 
 /**
  * @brief Register current thread's module name to global table (for Async mode)
@@ -367,8 +367,8 @@ inline ThreadModuleTable& GetGlobalThreadModuleTable() {
  * 在异步模式下，调用 SetModuleName() 后调用此函数，使模块名对 WriterThread 可见。
  */
 inline void RegisterModuleName() {
-    uint32_t tid = detail::GetCurrentThreadIdInternal();
-    detail::GetGlobalThreadModuleTable().Register(tid, detail::GetTlsModuleName());
+    uint32_t tid = internal::GetCurrentThreadIdInternal();
+    internal::GetGlobalThreadModuleTable().Register(tid, internal::GetTlsModuleName());
 }
 
 /**
@@ -394,7 +394,7 @@ inline void SetAndRegisterModuleName(const std::string& name) {
  * 用于异步模式下的 WriterThread。
  */
 inline std::string LookupModuleName(uint32_t threadId) {
-    std::string name = detail::GetGlobalThreadModuleTable().GetName(threadId);
+    std::string name = internal::GetGlobalThreadModuleTable().GetName(threadId);
     if (!name.empty()) {
         return name;
     }

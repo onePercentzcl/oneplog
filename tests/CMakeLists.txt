@@ -26,6 +26,8 @@ set(TEST_SOURCES
     test_direct_mapping_table.cpp
     test_array_mapping_table.cpp
     test_optimized_name_manager.cpp
+    test_fast_logger_config.cpp
+    test_fast_logger_v2.cpp
 )
 
 # ==============================================================================
@@ -35,11 +37,20 @@ add_executable(oneplog_tests ${TEST_SOURCES})
 
 target_link_libraries(oneplog_tests PRIVATE
     oneplog
-    rapidcheck_gtest
-    rapidcheck
-    GTest::gtest_main
     GTest::gtest
+    GTest::gtest_main
+    rapidcheck
+    rapidcheck_gtest
 )
+
+# Link fmt if enabled (using local fmt sources)
+if(ONEPLOG_USE_FMT)
+    target_sources(oneplog_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/fmt/format.cc
+        ${CMAKE_SOURCE_DIR}/src/fmt/os.cc
+    )
+    target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_USE_FMT)
+endif()
 
 target_include_directories(oneplog_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
