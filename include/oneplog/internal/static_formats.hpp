@@ -1,10 +1,10 @@
 /**
  * @file static_formats.hpp
- * @brief Static format and sink types for FastLogger
- * @brief FastLogger 的静态格式化器和 Sink 类型
+ * @brief Static format and sink types for Logger
+ * @brief Logger 的静态格式化器和 Sink 类型
  *
  * This file provides the static format and sink types that can be used
- * with FastLoggerV2's SinkBinding system:
+ * with Logger's SinkBinding system:
  * - MessageOnlyFormat: Message only, no metadata
  * - SimpleFormat: [HH:MM:SS] [LEVEL] message
  * - FullFormat: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message
@@ -25,7 +25,7 @@
 #include <string_view>
 
 #include "oneplog/common.hpp"
-#include "oneplog/internal/fast_logger_config.hpp"
+#include "oneplog/internal/logger_config.hpp"
 #include "oneplog/internal/log_entry.hpp"
 
 #ifdef ONEPLOG_USE_FMT

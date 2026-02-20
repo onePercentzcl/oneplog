@@ -45,23 +45,32 @@ endif()
 # ==============================================================================
 set(ONEPLOG_HEADERS
     include/oneplog/common.hpp
-    include/oneplog/internal/heap_memory.hpp
-    include/oneplog/internal/shared_memory.hpp
-    include/oneplog/internal/binary_snapshot.hpp
-    include/oneplog/internal/log_entry.hpp
-    include/oneplog/internal/format.hpp
-    include/oneplog/internal/pipeline_thread.hpp
-    include/oneplog/internal/writer_thread.hpp
-    include/oneplog/sinks/sink.hpp
     include/oneplog/logger.hpp
-    include/oneplog/macros.hpp
-    include/oneplog/oneplog.hpp
     include/oneplog/name_manager.hpp
+    include/oneplog/oneplog.hpp
+    include/oneplog/internal/array_mapping_table.hpp
+    include/oneplog/internal/binary_snapshot.hpp
+    include/oneplog/internal/direct_mapping_table.hpp
+    include/oneplog/internal/fixed_name.hpp
+    include/oneplog/internal/heap_memory.hpp
+    include/oneplog/internal/heap_ring_buffer.hpp
+    include/oneplog/internal/log_entry.hpp
+    include/oneplog/internal/logger_config.hpp
+    include/oneplog/internal/memory_pool.hpp
+    include/oneplog/internal/optimized_name_manager.hpp
+    include/oneplog/internal/pipeline_thread.hpp
+    include/oneplog/internal/platform_lookup_table.hpp
+    include/oneplog/internal/ring_buffer.hpp
+    include/oneplog/internal/shared_memory.hpp
+    include/oneplog/internal/shared_ring_buffer.hpp
+    include/oneplog/internal/static_formats.hpp
+    include/oneplog/sinks/sink.hpp
+    include/oneplog/benchmark/latency_collector.hpp
+    include/oneplog/benchmark/performance_benchmark.hpp
 )
 
-set(ONEPLOG_SOURCES
-    src/oneplog/instantiations.cpp
-)
+# Header-only library - no source files needed
+set(ONEPLOG_SOURCES)
 
 set(FMT_SOURCES
     src/fmt/format.cc

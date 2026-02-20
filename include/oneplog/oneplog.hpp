@@ -24,20 +24,14 @@
 #endif
 
 // Formatting and output / 格式化和输出
-#include "oneplog/internal/format.hpp"
-#include "oneplog/sinks/sink.hpp"
+#include "oneplog/internal/static_formats.hpp"
+#include "oneplog/internal/logger_config.hpp"
 
 // Threads / 线程
 #ifndef ONEPLOG_SYNC_ONLY
 #include "oneplog/internal/pipeline_thread.hpp"
-#include "oneplog/internal/writer_thread.hpp"
 #endif
 
 // Logger / 日志器
 #include "oneplog/logger.hpp"
 
-// Memory pool / 内存池
-#include "oneplog/internal/memory_pool.hpp"
-
-// Macros / 宏定义
-#include "oneplog/macros.hpp"

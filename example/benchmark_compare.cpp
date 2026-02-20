@@ -16,9 +16,9 @@
 #include <sstream>
 #include <fstream>
 
-#include <oneplog/fast_logger_v2.hpp>
-// Note: We use fast_logger_v2.hpp which is the redesigned FastLogger
-// 注意：我们使用 fast_logger_v2.hpp，这是重新设计的 FastLogger
+#include <oneplog/logger.hpp>
+// Note: We use logger.hpp which is the high-performance Logger
+// 注意：我们使用 logger.hpp，这是高性能日志器
 
 #ifdef HAS_SPDLOG
 #include <spdlog/spdlog.h>

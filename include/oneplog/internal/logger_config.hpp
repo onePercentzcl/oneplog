@@ -1,13 +1,13 @@
 /**
- * @file fast_logger_config.hpp
- * @brief Compile-time configuration infrastructure for FastLogger
- * @brief FastLogger 的编译期配置基础设施
+ * @file logger_config.hpp
+ * @brief Compile-time configuration infrastructure for Logger
+ * @brief Logger 的编译期配置基础设施
  *
- * This file provides the compile-time configuration structures for FastLogger:
+ * This file provides the compile-time configuration structures for Logger:
  * - StaticFormatRequirements: Specifies metadata requirements for formatters
  * - SinkBinding: Binds a Sink type with a Format type
  * - SinkBindingList: Manages multiple SinkBindings with union of requirements
- * - FastLoggerConfig: Aggregates all compile-time configuration
+ * - LoggerConfig: Aggregates all compile-time configuration
  *
  * @copyright Copyright (c) 2024 onePlog
  */

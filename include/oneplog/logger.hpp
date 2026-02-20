@@ -1,14 +1,15 @@
 /**
  * @file logger.hpp
- * @brief Template-based Logger class for onePlog
- * @brief onePlog 模板化日志器
+ * @brief High-performance template-based Logger with compile-time configuration
+ * @brief 高性能模板化日志器，支持编译期配置
  *
- * This file provides a template-based Logger implementation that uses
- * C++17 template parameters to specify operating mode, log level, and
- * WFC functionality at compile time, achieving zero-overhead abstraction.
- *
- * 本文件提供基于模板的 Logger 实现，使用 C++17 模板参数在编译时
- * 指定运行模式、日志级别和 WFC 功能，实现零开销抽象。
+ * This is the main Logger implementation that uses LoggerConfig for all
+ * compile-time configuration. It supports:
+ * - Multi-sink binding via SinkBindingList
+ * - Three operating modes: Sync, Async, MProc
+ * - Compile-time level filtering
+ * - WFC (Wait For Completion) support
+ * - Proper resource management and move semantics
  *
  * @copyright Copyright (c) 2024 onePlog
  */
@@ -19,22 +20,22 @@
 #include <chrono>
 #include <cstdio>
 #include <memory>
-#include <mutex>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "oneplog/common.hpp"
-#include "oneplog/name_manager.hpp"
-#include "oneplog/sink.hpp"
-#include "oneplog/internal/binary_snapshot.hpp"
-#include "oneplog/internal/format.hpp"
-#include "oneplog/internal/heap_memory.hpp"
+#include "oneplog/internal/logger_config.hpp"
 #include "oneplog/internal/log_entry.hpp"
-#include "oneplog/internal/pipeline_thread.hpp"
+#include "oneplog/internal/heap_memory.hpp"
 #include "oneplog/internal/shared_memory.hpp"
-#include "oneplog/internal/writer_thread.hpp"
+#include "oneplog/internal/pipeline_thread.hpp"
+#include "oneplog/internal/static_formats.hpp"
+
+#ifdef ONEPLOG_USE_FMT
+#include <fmt/format.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,1339 +47,1630 @@
 namespace oneplog {
 
 // ==============================================================================
-// Compile-time Default Level / 编译时默认级别
+// Forward Declarations / 前向声明
+// ==============================================================================
+
+// Forward declare default configs (defined later)
+struct DefaultSyncConfig;
+struct DefaultAsyncConfig;
+struct DefaultMProcConfig;
+struct HighPerformanceConfig;
+
+// ==============================================================================
+// Runtime Configuration / 运行时配置
 // ==============================================================================
 
 /**
- * @brief Default log level based on build configuration
- * @brief 基于构建配置的默认日志级别
+ * @brief Runtime configuration for FastLogger
+ * @brief FastLogger 的运行时配置
  *
- * In Debug mode (NDEBUG not defined): Level::Debug
- * In Release mode (NDEBUG defined): Level::Info
+ * Contains configuration options that can be set at runtime.
+ * 包含可在运行时设置的配置选项。
  *
- * 调试模式（未定义 NDEBUG）：Level::Debug
- * 发布模式（定义了 NDEBUG）：Level::Info
+ * _Requirements: 13.3_
  */
-#ifdef NDEBUG
-constexpr Level kDefaultLevel = Level::Info;
-#else
-constexpr Level kDefaultLevel = Level::Debug;
-#endif
-
-// ==============================================================================
-// Logger Configuration / Logger 配置
-// ==============================================================================
+struct RuntimeConfig {
+    /// Process name for log identification / 用于日志标识的进程名称
+    std::string processName;
+    
+    /// Poll interval for async mode / 异步模式的轮询间隔
+    std::chrono::microseconds pollInterval{1};
+    
+    /// Enable colored output / 启用彩色输出
+    bool colorEnabled{true};
+    
+    /// Enable dynamic name resolution / 启用动态名称解析
+    bool dynamicNameResolution{true};
+};
 
 /**
- * @brief Logger configuration structure (runtime options)
- * @brief Logger 配置结构（运行时选项）
+ * @brief File sink configuration
+ * @brief 文件 Sink 配置
  *
- * This structure contains runtime configuration options that do not affect
- * the compile-time mode and level settings.
+ * Configuration for file-based sinks with rotation support.
+ * 支持轮转的文件 Sink 配置。
  *
- * 此结构包含不影响编译时模式和级别设置的运行时配置选项。
+ * _Requirements: 13.4_
  */
-struct LoggerConfig {
-    size_t heapRingBufferSize{8192};             ///< Heap ring buffer size / 堆环形队列大小
-    size_t sharedRingBufferSize{4096};           ///< Shared ring buffer size / 共享环形队列大小
-    QueueFullPolicy queueFullPolicy{QueueFullPolicy::DropNewest};  ///< Queue full policy / 队列满策略
-    std::string sharedMemoryName;                ///< Shared memory name (for MProc mode) / 共享内存名称
-    std::chrono::microseconds pollInterval{1};   ///< Poll interval / 轮询间隔
-    std::chrono::milliseconds pollTimeout{10};   ///< Poll timeout / 轮询超时
-    std::string processName;                     ///< Process name (optional) / 进程名（可选）
+struct FileSinkConfig {
+    /// File path / 文件路径
+    std::string filename;
+    
+    /// Maximum file size before rotation (0 = no limit) / 轮转前的最大文件大小（0 = 无限制）
+    size_t maxSize{0};
+    
+    /// Maximum number of rotated files (0 = no rotation) / 轮转文件的最大数量（0 = 不轮转）
+    size_t maxFiles{0};
+    
+    /// Rotate on open / 打开时轮转
+    bool rotateOnOpen{false};
 };
 
 // ==============================================================================
-// Logger Class / Logger 类
+// Helper Functions / 辅助函数
+// ==============================================================================
+
+namespace internal {
+
+/**
+ * @brief Get current nanosecond timestamp
+ * @brief 获取当前纳秒时间戳
+ */
+inline uint64_t GetNanosecondTimestamp() noexcept {
+    auto now = std::chrono::system_clock::now();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
+}
+
+/**
+ * @brief Get current thread ID
+ * @brief 获取当前线程 ID
+ */
+inline uint32_t GetCurrentThreadId() noexcept {
+#ifdef _WIN32
+    return static_cast<uint32_t>(::GetCurrentThreadId());
+#elif defined(__APPLE__)
+    uint64_t tid;
+    pthread_threadid_np(nullptr, &tid);
+    return static_cast<uint32_t>(tid);
+#else
+    return static_cast<uint32_t>(pthread_self());
+#endif
+}
+
+/**
+ * @brief Get current process ID
+ * @brief 获取当前进程 ID
+ */
+inline uint32_t GetCurrentProcessId() noexcept {
+#ifdef _WIN32
+    return static_cast<uint32_t>(::GetCurrentProcessId());
+#else
+    return static_cast<uint32_t>(::getpid());
+#endif
+}
+
+}  // namespace internal
+
+// ==============================================================================
+// FastLogger Class / 快速日志器类
 // ==============================================================================
 
 /**
- * @brief Template-based logger class with compile-time configuration
- * @brief 具有编译时配置的模板化日志器类
+ * @brief High-performance template-based logger with compile-time configuration
+ * @brief 使用编译期配置的高性能模板化日志器
  *
- * @tparam M Operating mode (Sync/Async/MProc), default: Mode::Async
- * @tparam L Compile-time minimum log level, default: kDefaultLevel
- * @tparam EnableWFC Enable WFC (Wait For Completion) functionality, default: false
- * @tparam EnableShadowTail Enable shadow tail optimization, default: true
- *                          Set to false for low contention scenarios (lower overhead).
+ * FastLogger is the main logging class that provides:
+ * - Compile-time type resolution for zero virtual call overhead
+ * - Multi-sink support via SinkBindingList
+ * - Three operating modes: Sync, Async, MProc
+ * - Compile-time log level filtering
+ * - WFC (Wait For Completion) support
  *
- * @tparam M 运行模式（Sync/Async/MProc），默认：Mode::Async
- * @tparam L 编译时最小日志级别，默认：kDefaultLevel
- * @tparam EnableWFC 启用 WFC（等待完成）功能，默认：false
- * @tparam EnableShadowTail 启用影子 tail 优化，默认：true
- *                          设为 false 适合低竞争场景（更低开销）。
+ * FastLogger 是主要的日志类，提供：
+ * - 编译期类型解析，实现零虚函数调用开销
+ * - 通过 SinkBindingList 支持多 Sink
+ * - 三种运行模式：Sync、Async、MProc
+ * - 编译期日志级别过滤
+ * - WFC（等待完成）支持
  *
- * Features:
- * - Compile-time mode selection eliminates runtime branching
- * - Compile-time level filtering optimizes away disabled log calls
- * - WFC functionality can be completely disabled at compile time
- * - Shadow tail optimization can be disabled for low contention scenarios
+ * @tparam Config The compile-time configuration type (FastLoggerConfig)
  *
- * 特性：
- * - 编译时模式选择消除运行时分支
- * - 编译时级别过滤优化掉禁用的日志调用
- * - WFC 功能可在编译时完全禁用
- * - 影子 tail 优化可在低竞争场景下禁用
+ * _Requirements: 2.1, 2.2_
  */
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-class Logger {
+template<typename Config = FastLoggerConfig<>>
+class FastLoggerV2 {
 public:
     // =========================================================================
-    // Compile-time Constants / 编译时常量
+    // Type Aliases and Compile-time Constants / 类型别名和编译期常量
     // =========================================================================
-
+    
+    /// The configuration type / 配置类型
+    using ConfigType = Config;
+    
+    /// The SinkBindings type from config / 来自配置的 SinkBindings 类型
+    using SinkBindings = typename Config::SinkBindings;
+    
     /// Operating mode / 运行模式
-    static constexpr Mode kMode = M;
+    static constexpr Mode kMode = Config::kMode;
     
-    /// Minimum log level (compile-time) / 最小日志级别（编译时）
-    static constexpr Level kMinLevel = L;
+    /// Minimum log level / 最小日志级别
+    static constexpr Level kMinLevel = Config::kLevel;
     
-    /// WFC functionality enabled / WFC 功能启用
-    static constexpr bool kEnableWFC = EnableWFC;
+    /// WFC enabled flag / WFC 启用标志
+    static constexpr bool kEnableWFC = Config::kEnableWFC;
     
-    /// Shadow tail optimization enabled / 影子 tail 优化启用
-    static constexpr bool kEnableShadowTail = EnableShadowTail;
+    /// Shadow tail optimization enabled / 影子尾指针优化启用
+    static constexpr bool kEnableShadowTail = Config::kEnableShadowTail;
+    
+    /// Use fmt library for formatting / 使用 fmt 库格式化
+    static constexpr bool kUseFmt = Config::kUseFmt;
+    
+    /// Heap ring buffer capacity / 堆环形队列容量
+    static constexpr size_t kHeapRingBufferCapacity = Config::kHeapRingBufferCapacity;
+    
+    /// Queue full policy / 队列满策略
+    static constexpr QueueFullPolicy kQueueFullPolicy = Config::kQueueFullPolicy;
+    
+    // =========================================================================
+    // Metadata Requirements from SinkBindings / 来自 SinkBindings 的元数据需求
+    // =========================================================================
+    
+    /// Whether timestamp is needed by any format / 是否有任何格式需要时间戳
+    static constexpr bool kNeedsTimestamp = SinkBindings::kNeedsTimestamp;
+    
+    /// Whether level is needed by any format / 是否有任何格式需要级别
+    static constexpr bool kNeedsLevel = SinkBindings::kNeedsLevel;
+    
+    /// Whether thread ID is needed by any format / 是否有任何格式需要线程 ID
+    static constexpr bool kNeedsThreadId = SinkBindings::kNeedsThreadId;
+    
+    /// Whether process ID is needed by any format / 是否有任何格式需要进程 ID
+    static constexpr bool kNeedsProcessId = SinkBindings::kNeedsProcessId;
+    
+    /// Whether source location is needed by any format / 是否有任何格式需要源位置
+    static constexpr bool kNeedsSourceLocation = SinkBindings::kNeedsSourceLocation;
 
     // =========================================================================
-    // Constructors and Destructor / 构造函数和析构函数
+    // Constructors / 构造函数
     // =========================================================================
-
+    
     /**
-     * @brief Construct a logger
-     * @brief 构造日志器
+     * @brief Default constructor
+     * @brief 默认构造函数
+     *
+     * Creates a FastLogger with default-constructed SinkBindings and
+     * default RuntimeConfig.
+     *
+     * 使用默认构造的 SinkBindings 和默认 RuntimeConfig 创建 FastLogger。
+     *
+     * _Requirements: 11.1, 13.1_
      */
-    Logger()
-        : m_initialized(false) {}
-
+    FastLoggerV2() : m_sinkBindings{}, m_runtimeConfig{} {
+        Initialize();
+    }
+    
     /**
-     * @brief Destructor - calls Shutdown()
-     * @brief 析构函数 - 调用 Shutdown()
+     * @brief Construct with RuntimeConfig
+     * @brief 使用 RuntimeConfig 构造
+     *
+     * @param config Runtime configuration / 运行时配置
+     *
+     * _Requirements: 11.1, 13.1_
      */
-    ~Logger() {
-        Shutdown();
+    explicit FastLoggerV2(const RuntimeConfig& config)
+        : m_sinkBindings{}
+        , m_runtimeConfig(config) {
+        Initialize();
+    }
+    
+    /**
+     * @brief Construct with SinkBindings instance
+     * @brief 使用 SinkBindings 实例构造
+     *
+     * @param bindings Pre-configured SinkBindings / 预配置的 SinkBindings
+     *
+     * _Requirements: 11.1, 13.2_
+     */
+    explicit FastLoggerV2(SinkBindings bindings)
+        : m_sinkBindings(std::move(bindings))
+        , m_runtimeConfig{} {
+        Initialize();
+    }
+    
+    /**
+     * @brief Construct with SinkBindings and RuntimeConfig
+     * @brief 使用 SinkBindings 和 RuntimeConfig 构造
+     *
+     * @param bindings Pre-configured SinkBindings / 预配置的 SinkBindings
+     * @param config Runtime configuration / 运行时配置
+     *
+     * _Requirements: 11.1, 13.1, 13.2_
+     */
+    FastLoggerV2(SinkBindings bindings, const RuntimeConfig& config)
+        : m_sinkBindings(std::move(bindings))
+        , m_runtimeConfig(config) {
+        Initialize();
     }
 
-    // =========================================================================
-    // Non-copyable, Movable / 不可复制，可移动
-    // =========================================================================
-
-    /// Deleted copy constructor / 删除的复制构造函数
-    Logger(const Logger&) = delete;
+    /**
+     * @brief Destructor
+     * @brief 析构函数
+     *
+     * Ensures proper resource cleanup order:
+     * 1. Stop worker thread (if running)
+     * 2. Drain remaining log entries
+     * 3. Close all sinks
+     *
+     * 确保正确的资源清理顺序：
+     * 1. 停止工作线程（如果正在运行）
+     * 2. 排空剩余日志条目
+     * 3. 关闭所有 Sink
+     *
+     * _Requirements: 11.2, 13.1, 13.2_
+     */
+    ~FastLoggerV2() {
+        // Must stop worker before any member is destroyed
+        if constexpr (kMode == Mode::MProc) {
+            StopMProcWorker();
+        } else if constexpr (kMode == Mode::Async) {
+            StopWorker();
+        }
+        
+        // Close all sinks
+        m_sinkBindings.CloseAll();
+        
+        // Note: m_ringBuffer, m_sharedMemory, m_pipelineThread will be destroyed after this
+    }
     
-    /// Deleted copy assignment / 删除的复制赋值
-    Logger& operator=(const Logger&) = delete;
-
+    // =========================================================================
+    // Move Semantics / 移动语义
+    // =========================================================================
+    
+    /// Deleted copy constructor / 删除的拷贝构造函数
+    FastLoggerV2(const FastLoggerV2&) = delete;
+    
+    /// Deleted copy assignment / 删除的拷贝赋值
+    FastLoggerV2& operator=(const FastLoggerV2&) = delete;
+    
     /**
      * @brief Move constructor
      * @brief 移动构造函数
+     *
+     * Transfers ownership of all resources from the source logger.
+     * The source logger is left in a valid but unspecified state.
+     *
+     * 从源日志器转移所有资源的所有权。
+     * 源日志器处于有效但未指定的状态。
+     *
+     * @param other Source logger to move from / 要移动的源日志器
+     *
+     * _Requirements: 11.3_
      */
-    Logger(Logger&& other) noexcept
-        : m_initialized(other.m_initialized)
-        , m_sinks(std::move(other.m_sinks))
-        , m_format(std::move(other.m_format))
-        , m_heapRingBuffer(std::move(other.m_heapRingBuffer))
-        , m_sharedMemory(std::move(other.m_sharedMemory))
-        , m_pipelineThread(std::move(other.m_pipelineThread))
-        , m_writerThread(std::move(other.m_writerThread)) {
-        other.m_initialized = false;
+    FastLoggerV2(FastLoggerV2&& other) noexcept
+        : m_sinkBindings(std::move(other.m_sinkBindings))
+        , m_runtimeConfig(std::move(other.m_runtimeConfig))
+        , m_ringBuffer(nullptr)
+        , m_sharedMemory(nullptr)
+        , m_pipelineThread(nullptr)
+        , m_running{false}
+        , m_isMProcOwner{false} {
+        if constexpr (kMode == Mode::MProc) {
+            // Stop the other's MProc workers first
+            other.StopMProcWorker();
+            
+            // Transfer ownership
+            m_ringBuffer = std::move(other.m_ringBuffer);
+            m_sharedMemory = std::move(other.m_sharedMemory);
+            m_pipelineThread = std::move(other.m_pipelineThread);
+            m_isMProcOwner = other.m_isMProcOwner;
+            other.m_isMProcOwner = false;
+            
+            // Restart workers if we have shared memory
+            if (m_sharedMemory) {
+                if (m_isMProcOwner && m_pipelineThread) {
+                    m_pipelineThread->Start();
+                }
+                StartMProcWorker();
+            }
+        } else if constexpr (kMode == Mode::Async) {
+            // Stop the other's worker first
+            other.StopWorker();
+            
+            // Transfer ring buffer ownership
+            m_ringBuffer = std::move(other.m_ringBuffer);
+            
+            // Start our own worker
+            if (m_ringBuffer) {
+                StartWorker();
+            }
+        }
     }
-
+    
     /**
      * @brief Move assignment operator
      * @brief 移动赋值运算符
+     *
+     * Transfers ownership of all resources from the source logger.
+     * The current logger's resources are properly cleaned up first.
+     *
+     * 从源日志器转移所有资源的所有权。
+     * 首先正确清理当前日志器的资源。
+     *
+     * @param other Source logger to move from / 要移动的源日志器
+     * @return Reference to this logger / 对此日志器的引用
+     *
+     * _Requirements: 11.4_
      */
-    Logger& operator=(Logger&& other) noexcept {
+    FastLoggerV2& operator=(FastLoggerV2&& other) noexcept {
         if (this != &other) {
-            Shutdown();
+            // Stop our workers and clean up
+            if constexpr (kMode == Mode::MProc) {
+                StopMProcWorker();
+            } else if constexpr (kMode == Mode::Async) {
+                StopWorker();
+            }
+            m_sinkBindings.CloseAll();
             
-            m_initialized = other.m_initialized;
-            m_sinks = std::move(other.m_sinks);
-            m_format = std::move(other.m_format);
-            m_heapRingBuffer = std::move(other.m_heapRingBuffer);
-            m_sharedMemory = std::move(other.m_sharedMemory);
-            m_pipelineThread = std::move(other.m_pipelineThread);
-            m_writerThread = std::move(other.m_writerThread);
+            // Move resources
+            m_sinkBindings = std::move(other.m_sinkBindings);
+            m_runtimeConfig = std::move(other.m_runtimeConfig);
             
-            other.m_initialized = false;
+            if constexpr (kMode == Mode::MProc) {
+                // Stop the other's MProc workers
+                other.StopMProcWorker();
+                
+                // Transfer ownership
+                m_ringBuffer = std::move(other.m_ringBuffer);
+                m_sharedMemory = std::move(other.m_sharedMemory);
+                m_pipelineThread = std::move(other.m_pipelineThread);
+                m_isMProcOwner = other.m_isMProcOwner;
+                other.m_isMProcOwner = false;
+                
+                // Restart workers if we have shared memory
+                if (m_sharedMemory) {
+                    if (m_isMProcOwner && m_pipelineThread) {
+                        m_pipelineThread->Start();
+                    }
+                    StartMProcWorker();
+                }
+            } else if constexpr (kMode == Mode::Async) {
+                // Stop the other's worker
+                other.StopWorker();
+                
+                // Transfer ring buffer
+                m_ringBuffer = std::move(other.m_ringBuffer);
+                
+                // Start our worker
+                if (m_ringBuffer) {
+                    StartWorker();
+                }
+            }
         }
         return *this;
     }
 
     // =========================================================================
-    // Initialization and Shutdown / 初始化和关闭
-    // =========================================================================
-
-    /**
-     * @brief Initialize the logger with default configuration
-     * @brief 使用默认配置初始化日志器
-     */
-    void Init() {
-        LoggerConfig config;
-        InitImpl(config);
-    }
-
-    /**
-     * @brief Initialize the logger with custom configuration
-     * @brief 使用自定义配置初始化日志器
-     *
-     * @param config Logger configuration / 日志器配置
-     */
-    void Init(const LoggerConfig& config) {
-        InitImpl(config);
-    }
-
-    /**
-     * @brief Shutdown the logger
-     * @brief 关闭日志器
-     *
-     * Stops background threads, flushes and closes sinks, releases resources.
-     * 停止后台线程，刷新并关闭 Sink，释放资源。
-     */
-    void Shutdown() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        
-        if (!m_initialized) {
-            return;
-        }
-
-        // Stop threads / 停止线程
-        if (m_writerThread) {
-            m_writerThread->Stop();
-            m_writerThread.reset();
-        }
-
-        if (m_pipelineThread) {
-            m_pipelineThread->Stop();
-            m_pipelineThread.reset();
-        }
-
-        // Close sinks / 关闭 Sink
-        for (auto& sink : m_sinks) {
-            if (sink) {
-                sink->Flush();
-                sink->Close();
-            }
-        }
-
-        // Release resources / 释放资源
-        m_heapRingBuffer.reset();
-        m_sharedMemory.reset();
-
-        // Shutdown NameManager / 关闭 NameManager
-        NameManager<EnableWFC>::Shutdown();
-
-        m_initialized = false;
-    }
-
-    /**
-     * @brief Check if logger is initialized
-     * @brief 检查日志器是否已初始化
-     */
-    bool IsInitialized() const { return m_initialized; }
-
-    // =========================================================================
-    // Configuration / 配置
-    // =========================================================================
-
-    /**
-     * @brief Set the primary sink
-     * @brief 设置主 Sink
-     */
-    void SetSink(std::shared_ptr<Sink> sink) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_sinks.clear();
-        if (sink) {
-            m_sinks.push_back(std::move(sink));
-        }
-    }
-
-    /**
-     * @brief Add a sink
-     * @brief 添加 Sink
-     */
-    void AddSink(std::shared_ptr<Sink> sink) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (sink) {
-            m_sinks.push_back(std::move(sink));
-        }
-    }
-
-    /**
-     * @brief Get sinks
-     * @brief 获取 Sink 列表
-     */
-    const std::vector<std::shared_ptr<Sink>>& GetSinks() const {
-        return m_sinks;
-    }
-
-    /**
-     * @brief Set the formatter
-     * @brief 设置格式化器
-     */
-    void SetFormat(std::shared_ptr<Format> format) {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_format = std::move(format);
-        if (m_writerThread) {
-            m_writerThread->SetFormat(m_format);
-        }
-    }
-
-    /**
-     * @brief Get the formatter
-     * @brief 获取格式化器
-     */
-    std::shared_ptr<Format> GetFormat() const {
-        return m_format;
-    }
-
-    // =========================================================================
     // Logging Methods / 日志记录方法
     // =========================================================================
-
+    
     /**
-     * @brief Log a trace message (compile-time filtered)
-     * @brief 记录跟踪消息（编译时过滤）
+     * @brief Log a trace message
+     * @brief 记录跟踪消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Trace(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Trace) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Trace>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+    void Trace(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Trace) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Trace>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
-     * @brief Log a debug message (compile-time filtered)
-     * @brief 记录调试消息（编译时过滤）
+     * @brief Log a debug message
+     * @brief 记录调试消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Debug(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Debug) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Debug>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+    void Debug(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Debug) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Debug>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
-     * @brief Log an info message (compile-time filtered)
-     * @brief 记录信息消息（编译时过滤）
+     * @brief Log an info message
+     * @brief 记录信息消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Info(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Info) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Info>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+    void Info(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Info) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Info>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
-     * @brief Log a warning message (compile-time filtered)
-     * @brief 记录警告消息（编译时过滤）
+     * @brief Log a warning message
+     * @brief 记录警告消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Warn(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Warn) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Warn>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+    void Warn(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Warn) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Warn>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
-     * @brief Log an error message (compile-time filtered)
-     * @brief 记录错误消息（编译时过滤）
+     * @brief Log an error message
+     * @brief 记录错误消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Error(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Error) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Error>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
+    void Error(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Error) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Error>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
-     * @brief Log a critical message (compile-time filtered)
-     * @brief 记录严重错误消息（编译时过滤）
+     * @brief Log a critical message
+     * @brief 记录严重错误消息
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.2, 2.4, 14.1_
      */
     template<typename... Args>
-    void Critical(const char* fmt, Args&&... args) {
-        if constexpr (static_cast<uint8_t>(Level::Critical) >= static_cast<uint8_t>(L)) {
-            LogImpl<Level::Critical>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
-        }
-    }
-
-    /**
-     * @brief Log a message with runtime level selection
-     * @brief 使用运行时级别选择记录消息
-     */
-    template<typename... Args>
-    void Log(Level level, const char* fmt, Args&&... args) {
-        if (static_cast<uint8_t>(level) < static_cast<uint8_t>(L)) {
-            return;
-        }
-        
-        uint64_t timestamp = GetNanosecondTimestamp();
-        
-        if constexpr (M == Mode::Sync) {
-            ProcessEntrySyncDirect(level, timestamp, ONEPLOG_CURRENT_LOCATION, 
-                                   fmt, std::forward<Args>(args)...);
-        } else {
-            ProcessEntryAsync(level, timestamp, ONEPLOG_CURRENT_LOCATION, 
-                              fmt, std::forward<Args>(args)...);
-        }
-    }
-
-    /**
-     * @brief Log a message with runtime level and source location
-     * @brief 使用运行时级别和源位置记录消息
-     */
-    template<typename... Args>
-    void Log(Level level, const SourceLocation& loc, const char* fmt, Args&&... args) {
-        if (static_cast<uint8_t>(level) < static_cast<uint8_t>(L)) {
-            return;
-        }
-        
-        uint64_t timestamp = GetNanosecondTimestamp();
-        
-        if constexpr (M == Mode::Sync) {
-            ProcessEntrySyncDirect(level, timestamp, loc, fmt, std::forward<Args>(args)...);
-        } else {
-            ProcessEntryAsync(level, timestamp, loc, fmt, std::forward<Args>(args)...);
+    void Critical(const char* fmt, Args&&... args) noexcept {
+        if constexpr (static_cast<uint8_t>(Level::Critical) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImpl<Level::Critical>(fmt, std::forward<Args>(args)...);
         }
     }
 
     // =========================================================================
     // WFC Logging Methods / WFC 日志记录方法
     // =========================================================================
-
+    
     /**
      * @brief Log a trace message with WFC (Wait For Completion)
      * @brief 使用 WFC（等待完成）记录跟踪消息
+     *
+     * Only available when EnableWFC is true in the configuration.
+     * 仅当配置中 EnableWFC 为 true 时可用。
+     *
+     * @tparam Args Argument types / 参数类型
+     * @param fmt Format string / 格式字符串
+     * @param args Format arguments / 格式化参数
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void TraceWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Trace) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Trace>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Trace(fmt, std::forward<Args>(args)...);
+    void TraceWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Trace) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Trace>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
      * @brief Log a debug message with WFC
      * @brief 使用 WFC 记录调试消息
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void DebugWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Debug) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Debug>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Debug(fmt, std::forward<Args>(args)...);
+    void DebugWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Debug) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Debug>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
      * @brief Log an info message with WFC
      * @brief 使用 WFC 记录信息消息
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void InfoWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Info) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Info>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Info(fmt, std::forward<Args>(args)...);
+    void InfoWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Info) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Info>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
      * @brief Log a warning message with WFC
      * @brief 使用 WFC 记录警告消息
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void WarnWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Warn) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Warn>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Warn(fmt, std::forward<Args>(args)...);
+    void WarnWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Warn) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Warn>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
      * @brief Log an error message with WFC
      * @brief 使用 WFC 记录错误消息
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void ErrorWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Error) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Error>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Error(fmt, std::forward<Args>(args)...);
+    void ErrorWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Error) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Error>(fmt, std::forward<Args>(args)...);
         }
     }
-
+    
     /**
      * @brief Log a critical message with WFC
      * @brief 使用 WFC 记录严重错误消息
+     *
+     * _Requirements: 1.3, 14.2_
      */
     template<typename... Args>
-    void CriticalWFC(const char* fmt, Args&&... args) {
-        if constexpr (EnableWFC) {
-            if constexpr (static_cast<uint8_t>(Level::Critical) >= static_cast<uint8_t>(L)) {
-                LogWFCImpl<Level::Critical>(fmt, std::forward<Args>(args)...);
-            }
-        } else {
-            Critical(fmt, std::forward<Args>(args)...);
+    void CriticalWFC(const char* fmt, Args&&... args) noexcept {
+        static_assert(kEnableWFC, "WFC methods require EnableWFC=true in config");
+        if constexpr (static_cast<uint8_t>(Level::Critical) >= static_cast<uint8_t>(kMinLevel)) {
+            LogImplWFC<Level::Critical>(fmt, std::forward<Args>(args)...);
         }
     }
 
     // =========================================================================
-    // Query Methods / 查询方法
+    // Control Methods / 控制方法
     // =========================================================================
-
-    static constexpr Mode GetMode() { return kMode; }
-    static constexpr Level GetMinLevel() { return kMinLevel; }
-    static constexpr bool IsWFCEnabled() { return kEnableWFC; }
-    static constexpr bool IsShadowTailEnabled() { return kEnableShadowTail; }
-
-    // =========================================================================
-    // Flush / 刷新
-    // =========================================================================
-
-    void Flush() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        
-        if (m_writerThread) {
-            m_writerThread->Flush();
-        }
-        
-        for (auto& sink : m_sinks) {
-            if (sink) {
-                sink->Flush();
+    
+    /**
+     * @brief Flush all pending log entries
+     * @brief 刷新所有待处理的日志条目
+     *
+     * In async mode, waits for the ring buffer to drain before flushing sinks.
+     * In MProc mode, waits for both HeapRingBuffer and SharedRingBuffer to drain.
+     * 在异步模式下，等待环形队列排空后再刷新 Sink。
+     * 在多进程模式下，等待 HeapRingBuffer 和 SharedRingBuffer 都排空。
+     *
+     * _Requirements: 1.4, 14.3_
+     */
+    void Flush() noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            // Wait for HeapRingBuffer to drain (producer side)
+            if (m_ringBuffer) {
+                while (!m_ringBuffer->IsEmpty()) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                }
+            }
+            // Wait for SharedRingBuffer to drain
+            if (m_sharedMemory) {
+                auto* sharedRingBuffer = m_sharedMemory->GetRingBuffer();
+                if (sharedRingBuffer) {
+                    while (!sharedRingBuffer->IsEmpty()) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(100));
+                    }
+                }
+            }
+        } else if constexpr (kMode == Mode::Async) {
+            // Wait for ring buffer to drain
+            if (m_ringBuffer) {
+                while (!m_ringBuffer->IsEmpty()) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+                }
             }
         }
+        m_sinkBindings.FlushAll();
+    }
+    
+    /**
+     * @brief Shutdown the logger
+     * @brief 关闭日志器
+     *
+     * Stops the worker thread (if running) and closes all sinks.
+     * 停止工作线程（如果正在运行）并关闭所有 Sink。
+     *
+     * _Requirements: 1.4, 14.3_
+     */
+    void Shutdown() noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            StopMProcWorker();
+        } else if constexpr (kMode == Mode::Async) {
+            StopWorker();
+        }
+        m_sinkBindings.CloseAll();
+    }
+    
+    // =========================================================================
+    // Accessors / 访问器
+    // =========================================================================
+    
+    /**
+     * @brief Get the SinkBindings
+     * @brief 获取 SinkBindings
+     */
+    SinkBindings& GetSinkBindings() noexcept { return m_sinkBindings; }
+    
+    /**
+     * @brief Get the SinkBindings (const)
+     * @brief 获取 SinkBindings（常量）
+     */
+    const SinkBindings& GetSinkBindings() const noexcept { return m_sinkBindings; }
+    
+    /**
+     * @brief Get the RuntimeConfig
+     * @brief 获取 RuntimeConfig
+     */
+    RuntimeConfig& GetRuntimeConfig() noexcept { return m_runtimeConfig; }
+    
+    /**
+     * @brief Get the RuntimeConfig (const)
+     * @brief 获取 RuntimeConfig（常量）
+     */
+    const RuntimeConfig& GetRuntimeConfig() const noexcept { return m_runtimeConfig; }
+    
+    /**
+     * @brief Check if the logger is running (async mode)
+     * @brief 检查日志器是否正在运行（异步模式）
+     */
+    bool IsRunning() const noexcept {
+        return m_running.load(std::memory_order_acquire);
+    }
+    
+    // =========================================================================
+    // MProc Mode Accessors / 多进程模式访问器
+    // =========================================================================
+    
+    /**
+     * @brief Check if this logger is the owner (producer) in MProc mode
+     * @brief 检查此日志器是否是 MProc 模式下的所有者（生产者）
+     *
+     * _Requirements: 5.1, 5.2_
+     */
+    bool IsMProcOwner() const noexcept {
+        return m_isMProcOwner;
+    }
+    
+    /**
+     * @brief Get the SharedLoggerConfig (MProc mode only)
+     * @brief 获取 SharedLoggerConfig（仅 MProc 模式）
+     *
+     * Returns nullptr if not in MProc mode or SharedMemory is not initialized.
+     * 如果不在 MProc 模式或 SharedMemory 未初始化，则返回 nullptr。
+     *
+     * _Requirements: 5.6_
+     */
+    SharedLoggerConfig* GetSharedConfig() noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetConfig() : nullptr;
+        }
+        return nullptr;
+    }
+    
+    /**
+     * @brief Get the SharedLoggerConfig (const, MProc mode only)
+     * @brief 获取 SharedLoggerConfig（常量，仅 MProc 模式）
+     */
+    const SharedLoggerConfig* GetSharedConfig() const noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetConfig() : nullptr;
+        }
+        return nullptr;
+    }
+    
+    /**
+     * @brief Get the ProcessThreadNameTable (MProc mode only)
+     * @brief 获取 ProcessThreadNameTable（仅 MProc 模式）
+     *
+     * Returns nullptr if not in MProc mode or SharedMemory is not initialized.
+     * 如果不在 MProc 模式或 SharedMemory 未初始化，则返回 nullptr。
+     *
+     * _Requirements: 5.7_
+     */
+    ProcessThreadNameTable* GetNameTable() noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetNameTable() : nullptr;
+        }
+        return nullptr;
+    }
+    
+    /**
+     * @brief Get the ProcessThreadNameTable (const, MProc mode only)
+     * @brief 获取 ProcessThreadNameTable（常量，仅 MProc 模式）
+     */
+    const ProcessThreadNameTable* GetNameTable() const noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetNameTable() : nullptr;
+        }
+        return nullptr;
+    }
+    
+    /**
+     * @brief Register a process name in the shared name table (MProc mode only)
+     * @brief 在共享名称表中注册进程名称（仅 MProc 模式）
+     *
+     * @param name Process name to register / 要注册的进程名称
+     * @return Registered process ID, or 0 if failed / 注册的进程 ID，失败返回 0
+     *
+     * _Requirements: 5.7_
+     */
+    uint32_t RegisterProcess(const std::string& name) noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->RegisterProcess(name) : 0;
+        }
+        return 0;
+    }
+    
+    /**
+     * @brief Register a thread name in the shared name table (MProc mode only)
+     * @brief 在共享名称表中注册线程名称（仅 MProc 模式）
+     *
+     * @param name Thread name to register / 要注册的线程名称
+     * @return Registered thread ID, or 0 if failed / 注册的线程 ID，失败返回 0
+     *
+     * _Requirements: 5.7_
+     */
+    uint32_t RegisterThread(const std::string& name) noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->RegisterThread(name) : 0;
+        }
+        return 0;
+    }
+    
+    /**
+     * @brief Get process name by ID from the shared name table (MProc mode only)
+     * @brief 从共享名称表中通过 ID 获取进程名称（仅 MProc 模式）
+     *
+     * @param id Process ID / 进程 ID
+     * @return Process name, or nullptr if not found / 进程名称，未找到返回 nullptr
+     *
+     * _Requirements: 5.7_
+     */
+    const char* GetProcessName(uint32_t id) const noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetProcessName(id) : nullptr;
+        }
+        return nullptr;
+    }
+    
+    /**
+     * @brief Get thread name by ID from the shared name table (MProc mode only)
+     * @brief 从共享名称表中通过 ID 获取线程名称（仅 MProc 模式）
+     *
+     * @param id Thread ID / 线程 ID
+     * @return Thread name, or nullptr if not found / 线程名称，未找到返回 nullptr
+     *
+     * _Requirements: 5.7_
+     */
+    const char* GetThreadName(uint32_t id) const noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetThreadName(id) : nullptr;
+        }
+        return nullptr;
     }
 
 private:
     // =========================================================================
-    // Internal Implementation / 内部实现
+    // Initialization / 初始化
     // =========================================================================
-
-    void InitImpl(const LoggerConfig& config) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+    
+    /**
+     * @brief Initialize the logger based on mode
+     * @brief 根据模式初始化日志器
+     */
+    void Initialize() {
+        if constexpr (kMode == Mode::Async) {
+            InitAsync();
+        } else if constexpr (kMode == Mode::MProc) {
+            InitMProc();
+        }
+        // Sync mode needs no initialization
+    }
+    
+    /**
+     * @brief Initialize async mode
+     * @brief 初始化异步模式
+     *
+     * Creates the HeapRingBuffer and starts the worker thread.
+     * 创建 HeapRingBuffer 并启动工作线程。
+     *
+     * _Requirements: 4.1, 4.2_
+     */
+    void InitAsync() {
+        m_ringBuffer = std::make_unique<
+            internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>
+        >(kHeapRingBufferCapacity, kQueueFullPolicy);
         
-        if (m_initialized) {
-            return;
-        }
-
-        // Initialize NameManager for name resolution / 初始化 NameManager 用于名称解析
-        NameManager<EnableWFC>::Initialize(M);
+        StartWorker();
+    }
+    
+    /**
+     * @brief Initialize multi-process mode
+     * @brief 初始化多进程模式
+     *
+     * Creates or connects to SharedMemory, creates HeapRingBuffer and
+     * PipelineThread (for producer), and creates WriterThread (for consumer).
+     *
+     * 创建或连接 SharedMemory，创建 HeapRingBuffer 和 PipelineThread（生产者），
+     * 以及创建 WriterThread（消费者）。
+     *
+     * _Requirements: 5.1, 5.2, 5.3_
+     */
+    void InitMProc() {
+        // Try to create shared memory (as owner/producer)
+        m_sharedMemory = internal::SharedMemory<kEnableWFC, kEnableShadowTail>::Create(
+            Config::SharedMemoryName::value,
+            Config::kSharedRingBufferCapacity,
+            kQueueFullPolicy);
         
-        // Set process name if provided / 如果提供了进程名则设置
-        if (!config.processName.empty()) {
-            NameManager<EnableWFC>::SetProcessName(config.processName);
-        }
-
-        if constexpr (M == Mode::Sync) {
-            // Sync mode: no background threads needed
-        }
-        else if constexpr (M == Mode::Async) {
-            // Async mode: create heap ring buffer and writer thread
-            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>>(
-                config.heapRingBufferSize, config.queueFullPolicy);
+        if (m_sharedMemory) {
+            // Successfully created - we are the owner (producer)
+            m_isMProcOwner = true;
             
-            if (!m_sinks.empty()) {
-                m_writerThread = std::make_unique<WriterThread<EnableWFC, EnableShadowTail>>(m_sinks[0]);
-                m_writerThread->SetHeapRingBuffer(m_heapRingBuffer.get());
-                m_writerThread->SetPollInterval(config.pollInterval);
-                m_writerThread->SetPollTimeout(config.pollTimeout);
-                if (m_format) {
-                    m_writerThread->SetFormat(m_format);
-                }
-                m_writerThread->Start();
+            // Create HeapRingBuffer for local buffering
+            m_ringBuffer = std::make_unique<
+                internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>
+            >(kHeapRingBufferCapacity, kQueueFullPolicy);
+            
+            // Create and start PipelineThread to transfer from HeapRingBuffer to SharedRingBuffer
+            m_pipelineThread = std::make_unique<PipelineThread<kEnableWFC, kEnableShadowTail>>(
+                *m_ringBuffer, *m_sharedMemory);
+            m_pipelineThread->SetPollInterval(m_runtimeConfig.pollInterval);
+            m_pipelineThread->SetPollTimeout(Config::kPollTimeout);
+            m_pipelineThread->Start();
+            
+            // Register process name if provided
+            if (!m_runtimeConfig.processName.empty()) {
+                m_sharedMemory->RegisterProcess(m_runtimeConfig.processName);
             }
-        }
-        else if constexpr (M == Mode::MProc) {
-            // Multi-process mode
-            if (!config.sharedMemoryName.empty()) {
-                m_sharedMemory = SharedMemory<EnableWFC, EnableShadowTail>::Create(
-                    config.sharedMemoryName,
-                    config.sharedRingBufferSize,
-                    config.queueFullPolicy);
-            }
-
-            m_heapRingBuffer = std::make_unique<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>>(
-                config.heapRingBufferSize, config.queueFullPolicy);
-
+            
+            // Start WriterThread to consume from SharedRingBuffer and write to sinks
+            StartMProcWorker();
+        } else {
+            // Failed to create - try to connect as consumer
+            m_sharedMemory = internal::SharedMemory<kEnableWFC, kEnableShadowTail>::Connect(
+                Config::SharedMemoryName::value);
+            
             if (m_sharedMemory) {
-                m_pipelineThread = std::make_unique<PipelineThread<EnableWFC, EnableShadowTail>>(
-                    *m_heapRingBuffer, *m_sharedMemory);
-                m_pipelineThread->SetPollInterval(config.pollInterval);
-                m_pipelineThread->SetPollTimeout(config.pollTimeout);
-                m_pipelineThread->Start();
-
-                if (!m_sinks.empty()) {
-                    m_writerThread = std::make_unique<WriterThread<EnableWFC, EnableShadowTail>>(m_sinks[0]);
-                    m_writerThread->SetSharedRingBuffer(m_sharedMemory->GetRingBuffer());
-                    m_writerThread->SetPollInterval(config.pollInterval);
-                    m_writerThread->SetPollTimeout(config.pollTimeout);
-                    if (m_format) {
-                        m_writerThread->SetFormat(m_format);
-                    }
-                    m_writerThread->Start();
+                // Successfully connected - we are a consumer
+                m_isMProcOwner = false;
+                
+                // Register process name if provided
+                if (!m_runtimeConfig.processName.empty()) {
+                    m_sharedMemory->RegisterProcess(m_runtimeConfig.processName);
                 }
-            }
-        }
-
-        m_initialized = true;
-    }
-
-    template<Level LogLevel, typename... Args>
-    void LogImpl(const SourceLocation& loc, const char* fmt, Args&&... args) noexcept {
-        try {
-            uint64_t timestamp = GetNanosecondTimestamp();
-            
-            if constexpr (M == Mode::Sync) {
-                ProcessEntrySyncDirect(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
+                
+                // Start WriterThread to consume from SharedRingBuffer
+                StartMProcWorker();
             } else {
-                ProcessEntryAsync(LogLevel, timestamp, loc, fmt, std::forward<Args>(args)...);
+                // Failed to connect - fall back to async mode
+                std::fprintf(stderr, "[oneplog] SharedMemory creation/connection failed, "
+                            "falling back to Async mode\n");
+                InitAsync();
             }
-        } catch (const std::exception& e) {
-            FallbackToStderr(LogLevel, fmt, e.what());
-        } catch (...) {
-            FallbackToStderr(LogLevel, fmt, "unknown exception");
         }
     }
 
+    // =========================================================================
+    // Internal Logging Implementation / 内部日志实现
+    // =========================================================================
+    
+    /**
+     * @brief Internal log implementation - dispatches to mode-specific method
+     * @brief 内部日志实现 - 分发到特定模式的方法
+     */
     template<Level LogLevel, typename... Args>
-    void LogWFCImpl(const char* fmt, Args&&... args) noexcept {
-        try {
-            if constexpr (EnableWFC) {
-                if constexpr (M == Mode::Sync) {
-                    LogImpl<LogLevel>(ONEPLOG_CURRENT_LOCATION, fmt, std::forward<Args>(args)...);
-                } else {
-                    LogEntry entry;
-                    entry.timestamp = GetNanosecondTimestamp();
-                    entry.level = LogLevel;
-                    entry.threadId = GetCurrentThreadId();
-                    entry.processId = GetCurrentProcessId();
-
-#ifndef NDEBUG
-                    auto loc = ONEPLOG_CURRENT_LOCATION;
-                    entry.file = loc.file;
-                    entry.function = loc.function;
-                    entry.line = loc.line;
-#endif
-
-                    if constexpr (sizeof...(Args) == 0) {
-                        entry.snapshot.CaptureStringView(std::string_view(fmt));
-                    } else {
-                        entry.snapshot.CaptureStringView(std::string_view(fmt));
-                        entry.snapshot.Capture(std::forward<Args>(args)...);
-                    }
-
-                    if (m_heapRingBuffer) {
-                        m_heapRingBuffer->TryPushWFC(std::move(entry));
-                    }
-                }
-            }
-        } catch (const std::exception& e) {
-            FallbackToStderr(LogLevel, fmt, e.what());
-        } catch (...) {
-            FallbackToStderr(LogLevel, fmt, "unknown exception");
+    void LogImpl(const char* fmt, Args&&... args) noexcept {
+        if constexpr (kMode == Mode::Sync) {
+            LogImplSync<LogLevel>(fmt, std::forward<Args>(args)...);
+        } else {
+            LogImplAsync<LogLevel>(fmt, std::forward<Args>(args)...);
         }
     }
-
-    template<typename... Args>
-    void ProcessEntrySyncDirect(Level level, uint64_t timestamp,
-                                const SourceLocation& loc,
-                                const char* fmt, Args&&... args) {
-        FormatRequirements req;
-        if (m_format) {
-            req = m_format->GetRequirements();
-        }
-
-        uint32_t threadId = req.needsThreadId ? GetCurrentThreadId() : 0;
-        uint32_t processId = req.needsProcessId ? GetCurrentProcessId() : 0;
-
-#ifdef ONEPLOG_USE_FMT
-        fmt::memory_buffer msgBuffer;
+    
+    /**
+     * @brief Sync mode log implementation
+     * @brief 同步模式日志实现
+     *
+     * Formats and writes directly to all sinks.
+     * 直接格式化并写入所有 Sink。
+     *
+     * _Requirements: 3.1, 9.4_
+     */
+    template<Level LogLevel, typename... Args>
+    void LogImplSync(const char* fmt, Args&&... args) noexcept {
+        // Compile-time conditional: only get what formats need
+        [[maybe_unused]] uint64_t timestamp = 0;
+        [[maybe_unused]] uint32_t threadId = 0;
+        [[maybe_unused]] uint32_t processId = 0;
         
-        if constexpr (sizeof...(Args) == 0) {
-            msgBuffer.append(std::string_view(fmt));
-        } else {
-            fmt::format_to(std::back_inserter(msgBuffer), fmt::runtime(fmt), 
-                           std::forward<Args>(args)...);
+        if constexpr (kNeedsTimestamp) {
+            timestamp = internal::GetNanosecondTimestamp();
         }
-        std::string_view message(msgBuffer.data(), msgBuffer.size());
-
-        fmt::memory_buffer outputBuffer;
-        if (m_format) {
-            m_format->FormatDirectToBuffer(outputBuffer, level, timestamp, 
-                                           threadId, processId, message);
-        } else {
-            DefaultFormatDirectToBuffer(outputBuffer, level, timestamp, 
-                                        threadId, processId, message);
+        if constexpr (kNeedsThreadId) {
+            threadId = internal::GetCurrentThreadId();
         }
-
-        std::string_view output(outputBuffer.data(), outputBuffer.size());
-        for (auto& sink : m_sinks) {
-            if (sink) {
-                sink->Write(output);
-            }
+        if constexpr (kNeedsProcessId) {
+            processId = internal::GetCurrentProcessId();
         }
-#else
-        std::string message;
-        if constexpr (sizeof...(Args) == 0) {
-            message = fmt;
-        } else {
-            BinarySnapshot snapshot;
-            snapshot.CaptureStringView(std::string_view(fmt));
-            snapshot.Capture(std::forward<Args>(args)...);
-            message = snapshot.FormatAll();
-        }
-
-        std::string output;
-        if (m_format) {
-            output = m_format->FormatDirect(level, timestamp, threadId, processId, message);
-        } else {
-            output = DefaultFormatDirect(level, timestamp, threadId, processId, message);
-        }
-
-        for (auto& sink : m_sinks) {
-            if (sink) {
-                sink->Write(output);
-            }
-        }
-#endif
-
-        (void)loc;
+        
+        // Format and write to all sinks
+        m_sinkBindings.template WriteAllSync<kUseFmt>(
+            LogLevel, timestamp, threadId, processId,
+            fmt, std::forward<Args>(args)...);
     }
-
-    template<typename... Args>
-    void ProcessEntryAsync(Level level, uint64_t timestamp,
-                           const SourceLocation& loc,
-                           const char* fmt, Args&&... args) {
-        FormatRequirements req;
-        if (m_format) {
-            req = m_format->GetRequirements();
-        } else {
-            req.needsThreadId = true;
-            req.needsProcessId = true;
-        }
-
+    
+    /**
+     * @brief Async mode log implementation
+     * @brief 异步模式日志实现
+     *
+     * Captures format string and arguments to LogEntry and pushes to ring buffer.
+     * 将格式字符串和参数捕获到 LogEntry 并推入环形队列。
+     *
+     * _Requirements: 4.3, 4.4_
+     */
+    template<Level LogLevel, typename... Args>
+    void LogImplAsync(const char* fmt, Args&&... args) noexcept {
+        if (!m_ringBuffer) return;
+        
         LogEntry entry;
-        entry.timestamp = timestamp;
-        entry.level = level;
-        entry.threadId = req.needsThreadId ? GetCurrentThreadId() : 0;
-        entry.processId = req.needsProcessId ? GetCurrentProcessId() : 0;
-
-#ifndef NDEBUG
-        if (req.needsSourceLocation) {
-            entry.file = loc.file;
-            entry.function = loc.function;
-            entry.line = loc.line;
+        
+        // Always capture timestamp for async mode (needed for ordering)
+        entry.timestamp = internal::GetNanosecondTimestamp();
+        entry.level = LogLevel;
+        
+        // Compile-time conditional: only get what formats need
+        if constexpr (kNeedsThreadId) {
+            entry.threadId = internal::GetCurrentThreadId();
         }
-#else
-        (void)loc;
-#endif
-
+        if constexpr (kNeedsProcessId) {
+            entry.processId = internal::GetCurrentProcessId();
+        }
+        
+        // Capture format string and arguments to BinarySnapshot
         if constexpr (sizeof...(Args) == 0) {
             entry.snapshot.CaptureStringView(std::string_view(fmt));
         } else {
             entry.snapshot.CaptureStringView(std::string_view(fmt));
             entry.snapshot.Capture(std::forward<Args>(args)...);
         }
-
-        if (m_heapRingBuffer) {
-            m_heapRingBuffer->TryPush(std::move(entry));
-            m_heapRingBuffer->NotifyConsumer();
-        }
+        
+        m_ringBuffer->TryPush(std::move(entry));
+        m_ringBuffer->NotifyConsumerIfWaiting();  // Only notify if consumer is waiting
     }
-
-    std::string DefaultFormatDirect(Level level, uint64_t timestamp,
-                                    uint32_t threadId, uint32_t processId,
-                                    const std::string& message) const {
-        static ConsoleFormat defaultFormat;
-        return defaultFormat.FormatDirect(level, timestamp, threadId, processId, message);
-    }
-
-#ifdef ONEPLOG_USE_FMT
-    void DefaultFormatDirectToBuffer(fmt::memory_buffer& buffer,
-                                     Level level, uint64_t timestamp,
-                                     uint32_t threadId, uint32_t processId,
-                                     std::string_view message) const {
-        static ConsoleFormat defaultFormat;
-        defaultFormat.FormatDirectToBuffer(buffer, level, timestamp, 
-                                           threadId, processId, message);
-    }
-#endif
-
-    // =========================================================================
-    // Helper Functions / 辅助函数
-    // =========================================================================
-
+    
     /**
-     * @brief Fallback to stderr when logging fails
-     * @brief 日志记录失败时降级到 stderr
+     * @brief WFC log implementation
+     * @brief WFC 日志实现
      *
-     * This ensures the program doesn't crash due to logging errors.
-     * 这确保程序不会因日志错误而崩溃。
+     * Similar to async but uses TryPushWFC and waits for completion.
+     * 类似于异步但使用 TryPushWFC 并等待完成。
+     *
+     * _Requirements: 1.3, 14.2_
      */
-    static void FallbackToStderr(Level level, const char* fmt, const char* error) noexcept {
-        try {
-            // Use fprintf for maximum safety (no exceptions)
-            // 使用 fprintf 以获得最大安全性（无异常）
-            std::fprintf(stderr, "[oneplog] LOGGING FAILED [%s]: format=\"%s\", error=\"%s\"\n",
-                         LevelToString(level, LevelNameStyle::Short4).data(),
-                         fmt ? fmt : "(null)",
-                         error ? error : "(null)");
-            std::fflush(stderr);
-        } catch (...) {
-            // Last resort: ignore all errors
-            // 最后手段：忽略所有错误
+    template<Level LogLevel, typename... Args>
+    void LogImplWFC(const char* fmt, Args&&... args) noexcept {
+        if constexpr (!kEnableWFC) {
+            // WFC not enabled, fall back to regular async
+            LogImplAsync<LogLevel>(fmt, std::forward<Args>(args)...);
+            return;
+        }
+        
+        if constexpr (kMode == Mode::Sync) {
+            // Sync mode doesn't need WFC, just log directly
+            LogImplSync<LogLevel>(fmt, std::forward<Args>(args)...);
+            return;
+        }
+        
+        if (!m_ringBuffer) return;
+        
+        LogEntry entry;
+        entry.timestamp = internal::GetNanosecondTimestamp();
+        entry.level = LogLevel;
+        
+        if constexpr (kNeedsThreadId) {
+            entry.threadId = internal::GetCurrentThreadId();
+        }
+        if constexpr (kNeedsProcessId) {
+            entry.processId = internal::GetCurrentProcessId();
+        }
+        
+        // Capture format string and arguments
+        if constexpr (sizeof...(Args) == 0) {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+        } else {
+            entry.snapshot.CaptureStringView(std::string_view(fmt));
+            entry.snapshot.Capture(std::forward<Args>(args)...);
+        }
+        
+        // Push with WFC and wait for completion
+        int64_t slot = m_ringBuffer->TryPushWFC(std::move(entry));
+        if (slot >= 0) {
+            m_ringBuffer->NotifyConsumer();
+            // Wait for the entry to be processed
+            m_ringBuffer->WaitForCompletion(slot, Config::kPollTimeout);
         }
     }
 
-    static uint64_t GetNanosecondTimestamp() {
-        auto now = std::chrono::system_clock::now();
-        auto duration = now.time_since_epoch();
-        return static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
+    // =========================================================================
+    // Worker Thread Management / 工作线程管理
+    // =========================================================================
+    
+    /**
+     * @brief Start the worker thread
+     * @brief 启动工作线程
+     *
+     * _Requirements: 4.2_
+     */
+    void StartWorker() {
+        if constexpr (kMode == Mode::Sync) {
+            return;  // Sync mode doesn't need a worker
+        }
+        
+        // Check if already running
+        if (m_running.load(std::memory_order_acquire)) {
+            return;
+        }
+        
+        m_running.store(true, std::memory_order_release);
+        m_worker = std::thread([this] {
+            WorkerLoop();
+        });
+    }
+    
+    /**
+     * @brief Stop the worker thread
+     * @brief 停止工作线程
+     *
+     * Ensures proper shutdown:
+     * 1. Signal worker to stop
+     * 2. Wake up worker if waiting
+     * 3. Wait for worker to finish
+     * 4. Drain remaining entries
+     *
+     * 确保正确关闭：
+     * 1. 通知工作线程停止
+     * 2. 如果工作线程在等待则唤醒它
+     * 3. 等待工作线程完成
+     * 4. 排空剩余条目
+     *
+     * _Requirements: 4.6, 8.1_
+     */
+    void StopWorker() {
+        if constexpr (kMode == Mode::Sync) {
+            return;  // Sync mode doesn't have a worker
+        }
+        
+        // Check if worker is running
+        if (!m_running.load(std::memory_order_acquire)) {
+            return;
+        }
+        
+        // Signal worker to stop
+        m_running.store(false, std::memory_order_release);
+        
+        // Wake up worker if it's waiting
+        if (m_ringBuffer) {
+            m_ringBuffer->NotifyConsumer();
+        }
+        
+        // Wait for worker to finish
+        if (m_worker.joinable()) {
+            m_worker.join();
+        }
+        
+        // Drain any remaining entries after worker has stopped
+        DrainRemainingEntries();
+    }
+    
+    /**
+     * @brief Worker thread main loop
+     * @brief 工作线程主循环
+     *
+     * _Requirements: 4.5_
+     */
+    void WorkerLoop() {
+        while (m_running.load(std::memory_order_acquire)) {
+            bool hasData = false;
+            LogEntry entry;
+            
+            // Process all available entries
+            if constexpr (kEnableWFC) {
+                // Use TryPopForWFC to get slot index for WFC completion
+                int64_t wfcSlot = -1;
+                while (m_running.load(std::memory_order_relaxed) &&
+                       m_ringBuffer && m_ringBuffer->TryPopForWFC(entry, wfcSlot)) {
+                    ProcessEntry(entry);
+                    // Mark WFC complete after processing
+                    if (wfcSlot >= 0) {
+                        m_ringBuffer->MarkWFCComplete(wfcSlot);
+                    }
+                    hasData = true;
+                }
+            } else {
+                while (m_running.load(std::memory_order_relaxed) &&
+                       m_ringBuffer && m_ringBuffer->TryPop(entry)) {
+                    ProcessEntry(entry);
+                    hasData = true;
+                }
+            }
+            
+            // No data available, wait for notification
+            if (!hasData && m_running.load(std::memory_order_relaxed)) {
+                if (m_ringBuffer) {
+                    m_ringBuffer->WaitForData(
+                        m_runtimeConfig.pollInterval,
+                        Config::kPollTimeout);
+                }
+            }
+        }
+        
+        // Drain remaining entries before exit
+        DrainRemainingEntries();
+        
+        m_sinkBindings.FlushAll();
+    }
+    
+    /**
+     * @brief Process a single log entry
+     * @brief 处理单个日志条目
+     */
+    void ProcessEntry(const LogEntry& entry) {
+        m_sinkBindings.template WriteAllAsync<kUseFmt>(entry);
+    }
+    
+    /**
+     * @brief Drain remaining entries from the ring buffer
+     * @brief 从环形队列排空剩余条目
+     */
+    void DrainRemainingEntries() {
+        if (!m_ringBuffer) return;
+        
+        LogEntry entry;
+        if constexpr (kEnableWFC) {
+            int64_t wfcSlot = -1;
+            while (m_ringBuffer->TryPopForWFC(entry, wfcSlot)) {
+                ProcessEntry(entry);
+                if (wfcSlot >= 0) {
+                    m_ringBuffer->MarkWFCComplete(wfcSlot);
+                }
+            }
+        } else {
+            while (m_ringBuffer->TryPop(entry)) {
+                ProcessEntry(entry);
+            }
+        }
     }
 
-    static uint32_t GetCurrentThreadId() {
-#ifdef _WIN32
-        return static_cast<uint32_t>(::GetCurrentThreadId());
-#elif defined(__APPLE__)
-        uint64_t tid;
-        pthread_threadid_np(nullptr, &tid);
-        return static_cast<uint32_t>(tid);
-#else
-        return static_cast<uint32_t>(pthread_self());
-#endif
+    // =========================================================================
+    // MProc Mode Support / 多进程模式支持
+    // =========================================================================
+    
+    /**
+     * @brief Start the MProc worker thread (consumes from SharedRingBuffer)
+     * @brief 启动 MProc 工作线程（从 SharedRingBuffer 消费）
+     *
+     * _Requirements: 5.3_
+     */
+    void StartMProcWorker() {
+        if (m_running.load(std::memory_order_acquire)) {
+            return;  // Already running
+        }
+        
+        m_running.store(true, std::memory_order_release);
+        m_worker = std::thread([this] {
+            MProcWorkerLoop();
+        });
     }
-
-    static uint32_t GetCurrentProcessId() {
-#ifdef _WIN32
-        return static_cast<uint32_t>(::GetCurrentProcessId());
-#else
-        return static_cast<uint32_t>(::getpid());
-#endif
+    
+    /**
+     * @brief Stop the MProc worker and pipeline threads
+     * @brief 停止 MProc 工作线程和管道线程
+     *
+     * Ensures proper shutdown order:
+     * 1. Stop pipeline thread first (stops producing to SharedRingBuffer)
+     * 2. Stop worker thread (stops consuming from SharedRingBuffer)
+     * 3. Drain remaining entries
+     *
+     * _Requirements: 5.1, 5.2, 5.3_
+     */
+    void StopMProcWorker() {
+        // Stop pipeline thread first (if we are the owner/producer)
+        if (m_pipelineThread) {
+            m_pipelineThread->Stop();
+        }
+        
+        // Signal worker to stop
+        if (!m_running.load(std::memory_order_acquire)) {
+            return;
+        }
+        
+        m_running.store(false, std::memory_order_release);
+        
+        // Wake up worker if it's waiting
+        if (m_sharedMemory) {
+            m_sharedMemory->NotifyConsumer();
+        }
+        
+        // Wait for worker to finish
+        if (m_worker.joinable()) {
+            m_worker.join();
+        }
+        
+        // Drain remaining entries from SharedRingBuffer
+        DrainSharedRingBuffer();
+        
+        // Also drain HeapRingBuffer if we are the owner
+        if (m_isMProcOwner && m_ringBuffer) {
+            DrainRemainingEntries();
+        }
+    }
+    
+    /**
+     * @brief MProc worker thread main loop (consumes from SharedRingBuffer)
+     * @brief MProc 工作线程主循环（从 SharedRingBuffer 消费）
+     *
+     * _Requirements: 5.3_
+     */
+    void MProcWorkerLoop() {
+        if (!m_sharedMemory) return;
+        
+        auto* sharedRingBuffer = m_sharedMemory->GetRingBuffer();
+        if (!sharedRingBuffer) return;
+        
+        while (m_running.load(std::memory_order_acquire)) {
+            bool hasData = false;
+            LogEntry entry;
+            
+            // Process all available entries from SharedRingBuffer
+            if constexpr (kEnableWFC) {
+                int64_t wfcSlot = -1;
+                while (m_running.load(std::memory_order_relaxed) &&
+                       sharedRingBuffer->TryPopForWFC(entry, wfcSlot)) {
+                    ProcessEntry(entry);
+                    if (wfcSlot >= 0) {
+                        sharedRingBuffer->MarkWFCComplete(wfcSlot);
+                    }
+                    hasData = true;
+                }
+            } else {
+                while (m_running.load(std::memory_order_relaxed) &&
+                       sharedRingBuffer->TryPop(entry)) {
+                    ProcessEntry(entry);
+                    hasData = true;
+                }
+            }
+            
+            // No data available, wait for notification
+            if (!hasData && m_running.load(std::memory_order_relaxed)) {
+                m_sharedMemory->WaitForData(
+                    m_runtimeConfig.pollInterval,
+                    Config::kPollTimeout);
+            }
+        }
+        
+        // Drain remaining entries before exit
+        DrainSharedRingBuffer();
+        
+        m_sinkBindings.FlushAll();
+    }
+    
+    /**
+     * @brief Drain remaining entries from the SharedRingBuffer
+     * @brief 从 SharedRingBuffer 排空剩余条目
+     */
+    void DrainSharedRingBuffer() {
+        if (!m_sharedMemory) return;
+        
+        auto* sharedRingBuffer = m_sharedMemory->GetRingBuffer();
+        if (!sharedRingBuffer) return;
+        
+        LogEntry entry;
+        if constexpr (kEnableWFC) {
+            int64_t wfcSlot = -1;
+            while (sharedRingBuffer->TryPopForWFC(entry, wfcSlot)) {
+                ProcessEntry(entry);
+                if (wfcSlot >= 0) {
+                    sharedRingBuffer->MarkWFCComplete(wfcSlot);
+                }
+            }
+        } else {
+            while (sharedRingBuffer->TryPop(entry)) {
+                ProcessEntry(entry);
+            }
+        }
     }
 
     // =========================================================================
     // Member Variables / 成员变量
     // =========================================================================
-
-    bool m_initialized;
-    std::mutex m_mutex;
-
-    std::vector<std::shared_ptr<Sink>> m_sinks;
-    std::shared_ptr<Format> m_format;
-
-    std::unique_ptr<HeapRingBuffer<LogEntry, EnableWFC, EnableShadowTail>> m_heapRingBuffer;
-    std::unique_ptr<SharedMemory<EnableWFC, EnableShadowTail>> m_sharedMemory;
-    std::unique_ptr<PipelineThread<EnableWFC, EnableShadowTail>> m_pipelineThread;
-    std::unique_ptr<WriterThread<EnableWFC, EnableShadowTail>> m_writerThread;
+    
+    // IMPORTANT: Declaration order matters for destruction order!
+    // 重要：声明顺序决定析构顺序！
+    //
+    // Destruction order (reverse of declaration):
+    // For Async mode:
+    //   1. m_worker - thread (should be joined before ringBuffer is destroyed)
+    //   2. m_running - atomic flag
+    //   3. m_ringBuffer - destroyed after worker is stopped
+    //   4. m_runtimeConfig - runtime configuration
+    //   5. m_sinkBindings - destroyed last (after all logging is done)
+    //
+    // For MProc mode:
+    //   1. m_worker - consumer thread (should be joined first)
+    //   2. m_pipelineThread - pipeline thread (should be stopped after worker)
+    //   3. m_running - atomic flag
+    //   4. m_sharedMemory - shared memory (destroyed after threads stopped)
+    //   5. m_ringBuffer - heap ring buffer (destroyed after pipeline thread)
+    //   6. m_runtimeConfig - runtime configuration
+    //   7. m_sinkBindings - destroyed last (after all logging is done)
+    
+    /// Sink bindings (destroyed last)
+    SinkBindings m_sinkBindings;
+    
+    /// Runtime configuration
+    RuntimeConfig m_runtimeConfig;
+    
+    /// Ring buffer for async/mproc modes (producer side in MProc)
+    std::unique_ptr<internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>> m_ringBuffer;
+    
+    /// Shared memory for MProc mode
+    std::unique_ptr<internal::SharedMemory<kEnableWFC, kEnableShadowTail>> m_sharedMemory;
+    
+    /// Pipeline thread for MProc mode (transfers from HeapRingBuffer to SharedRingBuffer)
+    std::unique_ptr<PipelineThread<kEnableWFC, kEnableShadowTail>> m_pipelineThread;
+    
+    /// Running flag for worker thread
+    std::atomic<bool> m_running{false};
+    
+    /// Worker thread (consumer in Async mode, SharedRingBuffer consumer in MProc mode)
+    std::thread m_worker;
+    
+    /// Flag to indicate if this is the owner (producer) in MProc mode
+    bool m_isMProcOwner{false};
 };
+
+// ==============================================================================
+// Default Configuration Presets / 默认配置预设
+// ==============================================================================
+
+/**
+ * @brief Default sync configuration preset
+ * @brief 默认同步配置预设
+ *
+ * Sync mode + Console output + SimpleFormat
+ * 同步模式 + 控制台输出 + SimpleFormat
+ *
+ * Default values:
+ * - HeapRingBufferCapacity: 8192 (unused in sync mode)
+ * - SharedRingBufferCapacity: 4096 (unused in sync mode)
+ * - QueueFullPolicy: DropNewest
+ * - PollInterval: 1 microsecond
+ * - PollTimeout: 10 milliseconds
+ * - Level: Debug (debug mode) / Info (release mode)
+ *
+ * _Requirements: 16.1, 16.5_
+ */
+struct DefaultSyncConfig : FastLoggerConfig<
+    Mode::Sync,
+    kDefaultLevel,
+    false,  // EnableWFC
+    false,  // EnableShadowTail (not needed for sync)
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity (unused in sync)
+    4096,   // SharedRingBufferCapacity (unused in sync)
+    QueueFullPolicy::DropNewest,
+    DefaultSharedMemoryName,
+    10,     // PollTimeoutMs
+    DefaultSinkBindings  // Console + SimpleFormat
+> {};
+
+/**
+ * @brief Default async configuration preset
+ * @brief 默认异步配置预设
+ *
+ * Async mode + Console output + SimpleFormat
+ * 异步模式 + 控制台输出 + SimpleFormat
+ *
+ * Default values:
+ * - HeapRingBufferCapacity: 8192
+ * - SharedRingBufferCapacity: 4096
+ * - QueueFullPolicy: DropNewest
+ * - PollInterval: 1 microsecond
+ * - PollTimeout: 10 milliseconds
+ * - Level: Debug (debug mode) / Info (release mode)
+ *
+ * _Requirements: 16.2, 16.5_
+ */
+struct DefaultAsyncConfig : FastLoggerConfig<
+    Mode::Async,
+    kDefaultLevel,
+    false,  // EnableWFC
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    4096,   // SharedRingBufferCapacity
+    QueueFullPolicy::DropNewest,
+    DefaultSharedMemoryName,
+    10,     // PollTimeoutMs
+    DefaultSinkBindings  // Console + SimpleFormat
+> {};
+
+/**
+ * @brief Default multi-process configuration preset
+ * @brief 默认多进程配置预设
+ *
+ * MProc mode + Console output + SimpleFormat + default shared memory configuration
+ * 多进程模式 + 控制台输出 + SimpleFormat + 默认共享内存配置
+ *
+ * Default values:
+ * - HeapRingBufferCapacity: 8192
+ * - SharedRingBufferCapacity: 4096
+ * - QueueFullPolicy: DropNewest
+ * - PollInterval: 1 microsecond
+ * - PollTimeout: 10 milliseconds
+ * - SharedMemoryName: "oneplog_shared"
+ * - Level: Debug (debug mode) / Info (release mode)
+ *
+ * _Requirements: 16.3, 16.5_
+ */
+struct DefaultMProcConfig : FastLoggerConfig<
+    Mode::MProc,
+    kDefaultLevel,
+    false,  // EnableWFC
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    4096,   // SharedRingBufferCapacity
+    QueueFullPolicy::DropNewest,
+    DefaultSharedMemoryName,
+    10,     // PollTimeoutMs
+    DefaultSinkBindings  // Console + SimpleFormat
+> {};
+
+/**
+ * @brief High performance configuration preset
+ * @brief 高性能配置预设
+ *
+ * Async mode + NullSink + MessageOnlyFormat (for benchmarking)
+ * 异步模式 + NullSink + MessageOnlyFormat（用于基准测试）
+ *
+ * Optimized for maximum throughput:
+ * - NullSink discards output (no I/O overhead)
+ * - MessageOnlyFormat skips metadata formatting
+ * - Level::Info filters out Trace/Debug
+ *
+ * Default values:
+ * - HeapRingBufferCapacity: 8192
+ * - SharedRingBufferCapacity: 4096
+ * - QueueFullPolicy: DropNewest
+ * - PollInterval: 1 microsecond
+ * - PollTimeout: 10 milliseconds
+ *
+ * _Requirements: 16.4, 16.5_
+ */
+struct HighPerformanceConfig : FastLoggerConfig<
+    Mode::Async,
+    Level::Info,
+    false,  // EnableWFC
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    4096,   // SharedRingBufferCapacity
+    QueueFullPolicy::DropNewest,
+    DefaultSharedMemoryName,
+    10,     // PollTimeoutMs
+    HighPerformanceSinkBindings  // NullSink + MessageOnlyFormat
+> {};
 
 // ==============================================================================
 // Type Aliases / 类型别名
 // ==============================================================================
 
-template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-using SyncLogger = Logger<Mode::Sync, L, EnableWFC, EnableShadowTail>;
-
-template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-using AsyncLogger = Logger<Mode::Async, L, EnableWFC, EnableShadowTail>;
-
-template<Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-using MProcLogger = Logger<Mode::MProc, L, EnableWFC, EnableShadowTail>;
-
-using DebugLogger = Logger<Mode::Async, Level::Debug, false>;
-using ReleaseLogger = Logger<Mode::Async, Level::Info, false>;
-using DebugLoggerWFC = Logger<Mode::Async, Level::Debug, true>;
-using ReleaseLoggerWFC = Logger<Mode::Async, Level::Info, true>;
-
-// ==============================================================================
-// Global Logger / 全局日志器
-// ==============================================================================
-
-namespace internal {
-
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>>& GetDefaultLoggerPtr() {
-    static std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> defaultLogger;
-    return defaultLogger;
-}
-
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline std::mutex& GetDefaultLoggerMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
-}  // namespace internal
-
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> DefaultLogger() {
-    std::lock_guard<std::mutex> lock(internal::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
-    return internal::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>();
-}
-
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline void SetDefaultLogger(std::shared_ptr<Logger<M, L, EnableWFC, EnableShadowTail>> logger) {
-    std::lock_guard<std::mutex> lock(internal::GetDefaultLoggerMutex<M, L, EnableWFC, EnableShadowTail>());
-    internal::GetDefaultLoggerPtr<M, L, EnableWFC, EnableShadowTail>() = std::move(logger);
-}
-
-// ==============================================================================
-// Default Logger Type / 默认日志器类型
-// ==============================================================================
-
 /**
- * @brief Default logger type for simplified API
- * @brief 简化 API 的默认日志器类型
+ * @brief Sync logger type alias (V2 suffix for explicit versioning)
+ * @brief 同步日志器类型别名（V2 后缀用于显式版本控制）
  *
- * The default logger uses:
- * - Mode::Async for best performance
- * - kDefaultLevel (Debug in debug builds, Info in release)
- * - EnableWFC=false (WFC disabled by default for zero overhead)
+ * _Requirements: 1.7, 14.5_
+ */
+using SyncLoggerV2 = FastLoggerV2<DefaultSyncConfig>;
+
+/**
+ * @brief Async logger type alias (V2 suffix for explicit versioning)
+ * @brief 异步日志器类型别名（V2 后缀用于显式版本控制）
  *
- * 默认日志器使用：
- * - Mode::Async 以获得最佳性能
- * - kDefaultLevel（调试构建为 Debug，发布构建为 Info）
- * - EnableWFC=false（默认禁用 WFC 以实现零开销）
+ * _Requirements: 1.7, 14.5_
+ */
+using AsyncLoggerV2 = FastLoggerV2<DefaultAsyncConfig>;
+
+/**
+ * @brief Multi-process logger type alias (V2 suffix for explicit versioning)
+ * @brief 多进程日志器类型别名（V2 后缀用于显式版本控制）
  *
- * Users can customize by defining macros before including oneplog:
- * 用户可以在包含 oneplog 之前定义宏来自定义：
- * @code
- * #define ONEPLOG_DEFAULT_MODE oneplog::Mode::MProc
- * #define ONEPLOG_DEFAULT_LEVEL oneplog::Level::Debug
- * #define ONEPLOG_DEFAULT_ENABLE_WFC true
- * #include <oneplog/oneplog.hpp>
- * @endcode
+ * _Requirements: 1.7, 14.5_
  */
-
-#ifndef ONEPLOG_DEFAULT_MODE
-#define ONEPLOG_DEFAULT_MODE Mode::Async
-#endif
-
-#ifndef ONEPLOG_DEFAULT_LEVEL
-#define ONEPLOG_DEFAULT_LEVEL kDefaultLevel
-#endif
-
-#ifndef ONEPLOG_DEFAULT_ENABLE_WFC
-#define ONEPLOG_DEFAULT_ENABLE_WFC false
-#endif
-
-#ifndef ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL
-#define ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL true
-#endif
-
-using DefaultLoggerType = Logger<ONEPLOG_DEFAULT_MODE, ONEPLOG_DEFAULT_LEVEL, ONEPLOG_DEFAULT_ENABLE_WFC, ONEPLOG_DEFAULT_ENABLE_SHADOW_TAIL>;
-
-// ==============================================================================
-// Global Logger Storage / 全局日志器存储
-// ==============================================================================
-
-namespace internal {
+using MProcLoggerV2 = FastLoggerV2<DefaultMProcConfig>;
 
 /**
- * @brief Global default logger instance (type-erased for simplified API)
- * @brief 全局默认日志器实例（类型擦除以简化 API）
- */
-inline std::shared_ptr<DefaultLoggerType>& GetGlobalLoggerPtr() {
-    static std::shared_ptr<DefaultLoggerType> globalLogger;
-    return globalLogger;
-}
-
-inline std::mutex& GetGlobalLoggerMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
-
-}  // namespace internal
-
-// ==============================================================================
-// Global Convenience Functions / 全局便捷函数
-// ==============================================================================
-
-// Legacy template-based functions (for backward compatibility)
-// 旧版模板函数（向后兼容）
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline void InitLogger(const LoggerConfig& config = LoggerConfig{}) {
-    auto logger = std::make_shared<Logger<M, L, EnableWFC, EnableShadowTail>>();
-    logger->SetSink(std::make_shared<ConsoleSink>());
-    logger->SetFormat(std::make_shared<ConsoleFormat>());
-    logger->Init(config);
-    SetDefaultLogger<M, L, EnableWFC, EnableShadowTail>(logger);
-}
-
-template<Mode M = Mode::Async, Level L = kDefaultLevel, bool EnableWFC = false, bool EnableShadowTail = true>
-inline void ShutdownLogger() {
-    auto logger = DefaultLogger<M, L, EnableWFC, EnableShadowTail>();
-    if (logger) {
-        logger->Shutdown();
-    }
-    SetDefaultLogger<M, L, EnableWFC, EnableShadowTail>(nullptr);
-}
-
-// ==============================================================================
-// Simplified Public API / 简化公共 API
-// ==============================================================================
-
-/**
- * @brief Initialize the global logger (consumer mode - writes logs)
- * @brief 初始化全局日志器（消费者模式 - 写入日志）
+ * @brief Sync logger type alias (without V2 suffix for convenience)
+ * @brief 同步日志器类型别名（无 V2 后缀，便于使用）
  *
- * This is the main initialization function for single-process applications
- * or the consumer process in multi-process mode.
+ * _Requirements: 1.7, 14.5_
+ */
+using SyncLogger = FastLoggerV2<DefaultSyncConfig>;
+
+/**
+ * @brief Async logger type alias (without V2 suffix for convenience)
+ * @brief 异步日志器类型别名（无 V2 后缀，便于使用）
  *
- * 这是单进程应用程序或多进程模式中消费者进程的主要初始化函数。
+ * _Requirements: 1.7, 14.5_
+ */
+using AsyncLogger = FastLoggerV2<DefaultAsyncConfig>;
+
+/**
+ * @brief Multi-process logger type alias (without V2 suffix for convenience)
+ * @brief 多进程日志器类型别名（无 V2 后缀，便于使用）
  *
- * @param config Logger configuration / 日志器配置
+ * _Requirements: 1.7, 14.5_
+ */
+using MProcLogger = FastLoggerV2<DefaultMProcConfig>;
+
+/**
+ * @brief Backward-compatible Logger type alias
+ * @brief 向后兼容的 Logger 类型别名
  *
- * Usage / 用法:
- * @code
- * oneplog::Init();  // Use defaults
- * // or
- * oneplog::LoggerConfig config;
- * config.sharedMemoryName = "/myapp_log";
- * oneplog::Init(config);
- * @endcode
- */
-inline void Init(const LoggerConfig& config = LoggerConfig{}) {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    
-    auto logger = std::make_shared<DefaultLoggerType>();
-    logger->SetSink(std::make_shared<ConsoleSink>());
-    logger->SetFormat(std::make_shared<ConsoleFormat>());
-    logger->Init(config);
-    
-    internal::GetGlobalLoggerPtr() = logger;
-}
-
-/**
- * @brief Initialize the global logger for producer mode (MProc only)
- * @brief 初始化全局日志器为生产者模式（仅限 MProc）
+ * This template alias provides backward compatibility with the old Logger API.
+ * It maps the old template parameters to the new FastLoggerV2 configuration.
  *
- * In multi-process mode, producer processes only push logs to shared memory.
- * They don't need a writer thread or sink.
+ * 此模板别名提供与旧 Logger API 的向后兼容性。
+ * 它将旧的模板参数映射到新的 FastLoggerV2 配置。
  *
- * 在多进程模式下，生产者进程只将日志推送到共享内存。
- * 它们不需要写入线程或 Sink。
+ * @tparam M Operating mode (default: Async)
+ * @tparam L Minimum log level (default: kDefaultLevel)
+ * @tparam EnableWFC Enable WFC functionality (default: false)
+ * @tparam EnableShadowTail Enable shadow tail optimization (default: true)
  *
- * @param config Logger configuration (sharedMemoryName required)
- *
- * Usage / 用法:
- * @code
- * oneplog::LoggerConfig config;
- * config.sharedMemoryName = "/myapp_log";
- * oneplog::InitProducer(config);
- * @endcode
+ * _Requirements: 1.7, 14.5_
  */
-inline void InitProducer(const LoggerConfig& config) {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    
-    auto logger = std::make_shared<DefaultLoggerType>();
-    // Producer mode: no sink needed, logs go to shared memory
-    // 生产者模式：不需要 Sink，日志进入共享内存
-    logger->Init(config);
-    
-    internal::GetGlobalLoggerPtr() = logger;
-}
-
-/**
- * @brief Shutdown the global logger
- * @brief 关闭全局日志器
- */
-inline void Shutdown() {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    
-    auto& logger = internal::GetGlobalLoggerPtr();
-    if (logger) {
-        logger->Shutdown();
-        logger.reset();
-    }
-}
-
-/**
- * @brief Flush the global logger
- * @brief 刷新全局日志器
- */
-inline void Flush() {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    
-    auto& logger = internal::GetGlobalLoggerPtr();
-    if (logger) {
-        logger->Flush();
-    }
-}
-
-/**
- * @brief Get the global logger instance
- * @brief 获取全局日志器实例
- */
-inline std::shared_ptr<DefaultLoggerType> GetLogger() {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    return internal::GetGlobalLoggerPtr();
-}
-
-/**
- * @brief Set a custom logger as the global logger
- * @brief 设置自定义日志器为全局日志器
- */
-inline void SetLogger(std::shared_ptr<DefaultLoggerType> logger) {
-    std::lock_guard<std::mutex> lock(internal::GetGlobalLoggerMutex());
-    internal::GetGlobalLoggerPtr() = std::move(logger);
-}
-
-// ==============================================================================
-// Global Logging Functions / 全局日志函数
-// ==============================================================================
-
-/**
- * @brief Log at TRACE level
- * @brief 以 TRACE 级别记录日志
- */
-template<typename... Args>
-inline void Trace(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Trace(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at DEBUG level
- * @brief 以 DEBUG 级别记录日志
- */
-template<typename... Args>
-inline void Debug(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Debug(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at INFO level
- * @brief 以 INFO 级别记录日志
- */
-template<typename... Args>
-inline void Info(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Info(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at WARN level
- * @brief 以 WARN 级别记录日志
- */
-template<typename... Args>
-inline void Warn(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Warn(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at ERROR level
- * @brief 以 ERROR 级别记录日志
- */
-template<typename... Args>
-inline void Error(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Error(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at CRITICAL level
- * @brief 以 CRITICAL 级别记录日志
- */
-template<typename... Args>
-inline void Critical(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->Critical(fmt, std::forward<Args>(args)...);
-    }
-}
-
-// ==============================================================================
-// Global WFC Logging Functions / 全局 WFC 日志函数
-// ==============================================================================
-
-/**
- * @brief Log at TRACE level with WFC (Wait For Completion)
- * @brief 以 TRACE 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void TraceWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->TraceWFC(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at DEBUG level with WFC
- * @brief 以 DEBUG 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void DebugWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->DebugWFC(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at INFO level with WFC
- * @brief 以 INFO 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void InfoWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->InfoWFC(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at WARN level with WFC
- * @brief 以 WARN 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void WarnWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->WarnWFC(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at ERROR level with WFC
- * @brief 以 ERROR 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void ErrorWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->ErrorWFC(fmt, std::forward<Args>(args)...);
-    }
-}
-
-/**
- * @brief Log at CRITICAL level with WFC
- * @brief 以 CRITICAL 级别记录 WFC 日志
- */
-template<typename... Args>
-inline void CriticalWFC(const char* fmt, Args&&... args) {
-    auto logger = GetLogger();
-    if (logger) {
-        logger->CriticalWFC(fmt, std::forward<Args>(args)...);
-    }
-}
+template<Mode M = Mode::Async, 
+         Level L = kDefaultLevel,
+         bool EnableWFC = false, 
+         bool EnableShadowTail = true>
+using Logger = FastLoggerV2<FastLoggerConfig<
+    M, L, EnableWFC, EnableShadowTail, true,
+    8192, 4096, QueueFullPolicy::DropNewest,
+    DefaultSharedMemoryName, 10, DefaultSinkBindings
+>>;
 
 }  // namespace oneplog
-
-// ==============================================================================
-// Static Logger Class (Legacy) / 静态日志类（旧版）
-// ==============================================================================
-
-/**
- * @brief Static logger class for convenient logging (legacy API)
- * @brief 静态日志类，提供便捷的日志记录方式（旧版 API）
- *
- * @deprecated Use oneplog::Info(), oneplog::Error() etc. instead
- * @deprecated 请使用 oneplog::Info(), oneplog::Error() 等替代
- *
- * Usage / 用法:
- * @code
- * oneplog::Init();
- * log::Info("Hello, {}!", "world");
- * log::ErrorWFC("Critical error: {}", code);
- * @endcode
- */
-class log {
-public:
-    template<typename... Args>
-    static void Trace(const char* fmt, Args&&... args) {
-        oneplog::Trace(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void Debug(const char* fmt, Args&&... args) {
-        oneplog::Debug(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void Info(const char* fmt, Args&&... args) {
-        oneplog::Info(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void Warn(const char* fmt, Args&&... args) {
-        oneplog::Warn(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void Error(const char* fmt, Args&&... args) {
-        oneplog::Error(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void Critical(const char* fmt, Args&&... args) {
-        oneplog::Critical(fmt, std::forward<Args>(args)...);
-    }
-
-    // WFC logging methods
-    template<typename... Args>
-    static void TraceWFC(const char* fmt, Args&&... args) {
-        oneplog::TraceWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void DebugWFC(const char* fmt, Args&&... args) {
-        oneplog::DebugWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void InfoWFC(const char* fmt, Args&&... args) {
-        oneplog::InfoWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void WarnWFC(const char* fmt, Args&&... args) {
-        oneplog::WarnWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void ErrorWFC(const char* fmt, Args&&... args) {
-        oneplog::ErrorWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    template<typename... Args>
-    static void CriticalWFC(const char* fmt, Args&&... args) {
-        oneplog::CriticalWFC(fmt, std::forward<Args>(args)...);
-    }
-
-    static void Flush() {
-        oneplog::Flush();
-    }
-
-    static void Shutdown() {
-        oneplog::Shutdown();
-    }
-};
-

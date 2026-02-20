@@ -840,13 +840,13 @@ xmake run stress_test -- -b 10000
 | HeapRingBuffer 入队/出队 | 2662 万 ops/sec | 25 ns | 125 ns |
 | 格式化 | 277 万 ops/sec | 336 ns | 459 ns |
 
-### FastLoggerV2 与 spdlog 性能对比
+### Logger 与 spdlog 性能对比
 
-FastLoggerV2 是重新设计的高性能日志器，使用编译期配置和 SinkBindingList 实现零虚函数调用开销。
+Logger 是高性能日志器，使用编译期配置和 SinkBindingList 实现零虚函数调用开销。
 
 使用相同输出格式（仅消息）进行公平对比，结果为多次运行的平均值 ± 标准差：
 
-| 测试项 | onePlog FastLoggerV2 | spdlog | 对比 |
+| 测试项 | onePlog Logger | spdlog | 对比 |
 |--------|---------------------|--------|------|
 | 同步模式（Null Sink） | 1658 万 ± 45 万 ops/sec | 1652 万 ± 44 万 ops/sec | +0.4% |
 | 同步模式（File Sink） | 1036 万 ± 14 万 ops/sec | 860 万 ± 20 万 ops/sec | +20% |
@@ -869,35 +869,6 @@ clang++ -std=c++17 -O3 -I include -I /opt/homebrew/opt/fmt/include \
 # 运行（与 spdlog 对比需要 -DHAS_SPDLOG 和 spdlog 头文件）
 ./benchmark_compare -i 100000 -r 5
 ```
-
-### WFC 编译时开销测试
-
-测试启用 WFC 编译时标志（`EnableWFC=true`）但不使用 WFC 方法时的性能开销（100 次运行平均值 ± 标准差）：
-
-| 测试项 | WFC 禁用 | WFC 启用 | 开销 |
-|--------|----------|----------|------|
-| 异步模式（单线程） | 2810 万 ± 417 万 ops/sec | 2876 万 ± 495 万 ops/sec | +2.4%（噪声） |
-| 异步模式（4线程） | 1337 万 ± 133 万 ops/sec | 1309 万 ± 120 万 ops/sec | -2.1%（噪声） |
-| 多进程模式（单线程） | 1540 万 ± 319 万 ops/sec | 1635 万 ± 354 万 ops/sec | +6.2%（噪声） |
-| 多进程模式（4线程） | 1012 万 ± 102 万 ops/sec | 1020 万 ± 122 万 ops/sec | 无显著差异 |
-
-**注意**：当前实现中，消费者线程（WriterThread）在读取每条日志时都会检查 WFC 标志位（`IsWFCEnabled()`），无论 `EnableWFC` 模板参数是 `true` 还是 `false`。这是因为 `RingBufferBase` 不知道模板参数。
-
-**为什么开销很小**：
-- 原子读取（`atomic<uint8_t>::load`）在现代 CPU 上非常快（~1-2 纳秒）
-- CPU 分支预测器对几乎总是 `false` 的分支预测很好
-- `wfc` 字段与 `state` 字段在同一缓存行，读取 `state` 时已加载
-
-**结论**：WFC 编译时标志在不使用 WFC 方法时开销可忽略不计。
-
-运行 WFC 开销测试：
-```bash
-cd example
-xmake -P . -m release
-./build/macosx/arm64/release/benchmark_wfc_overhead -r 100
-```
-
-命令行参数：
 - `-i <iterations>`: 每次测试的迭代次数（默认 500000）
 - `-t <threads>`: 多线程测试的线程数（默认 4）
 - `-r <runs>`: 运行次数，用于计算平均值和标准差（默认 100）

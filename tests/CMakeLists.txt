@@ -26,8 +26,8 @@ set(TEST_SOURCES
     test_direct_mapping_table.cpp
     test_array_mapping_table.cpp
     test_optimized_name_manager.cpp
-    test_fast_logger_config.cpp
-    test_fast_logger_v2.cpp
+    test_logger_config.cpp
+    test_logger.cpp
 )
 
 # ==============================================================================

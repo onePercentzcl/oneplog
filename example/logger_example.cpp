@@ -1,13 +1,13 @@
 /**
- * @file fast_logger_example.cpp
- * @brief FastLoggerV2 usage examples
- * @brief FastLoggerV2 使用示例
+ * @file logger_example.cpp
+ * @brief Logger usage examples
+ * @brief Logger 使用示例
  *
- * This example demonstrates the various ways to use FastLoggerV2,
+ * This example demonstrates the various ways to use Logger,
  * the high-performance template-based logger in oneplog.
  *
- * 此示例演示了使用 FastLoggerV2 的各种方式，
- * FastLoggerV2 是 oneplog 中的高性能模板化日志器。
+ * 此示例演示了使用 Logger 的各种方式，
+ * Logger 是 oneplog 中的高性能模板化日志器。
  *
  * @copyright Copyright (c) 2024 onePlog
  */
@@ -15,7 +15,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
-#include <oneplog/fast_logger_v2.hpp>
+#include <oneplog/logger.hpp>
 
 // ==============================================================================
 // Example 1: Basic Usage / 基本用法
@@ -241,7 +241,7 @@ void HighPerformanceExample() {
 
 int main() {
     std::cout << "========================================" << std::endl;
-    std::cout << "FastLoggerV2 Examples / FastLoggerV2 示例" << std::endl;
+    std::cout << "Logger Examples / Logger 示例" << std::endl;
     std::cout << "========================================" << std::endl;
     
     BasicUsageExample();

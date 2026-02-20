@@ -1,13 +1,13 @@
 /**
- * @file test_fast_logger_config.cpp
- * @brief Tests for FastLogger compile-time configuration infrastructure
- * @brief FastLogger 编译期配置基础设施测试
+ * @file test_logger_config.cpp
+ * @brief Tests for Logger compile-time configuration infrastructure
+ * @brief Logger 编译期配置基础设施测试
  *
  * @copyright Copyright (c) 2024 onePlog
  */
 
 #include <gtest/gtest.h>
-#include "oneplog/internal/fast_logger_config.hpp"
+#include "oneplog/internal/logger_config.hpp"
 
 namespace oneplog {
 namespace {
