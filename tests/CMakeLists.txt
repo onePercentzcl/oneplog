@@ -35,12 +35,9 @@ set(TEST_SOURCES
 # ==============================================================================
 add_executable(oneplog_tests ${TEST_SOURCES})
 
-target_link_libraries(oneplog_tests PRIVATE
-    oneplog
-    GTest::gtest
-    GTest::gtest_main
-    rapidcheck
-    rapidcheck_gtest
+target_include_directories(oneplog_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/external/rapidcheck/extras/gtest/include
 )
 
 # Link fmt if enabled (using local fmt sources)
@@ -49,16 +46,21 @@ if(ONEPLOG_USE_FMT)
         ${CMAKE_SOURCE_DIR}/src/fmt/format.cc
         ${CMAKE_SOURCE_DIR}/src/fmt/os.cc
     )
-    target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_USE_FMT)
+    target_include_directories(oneplog_tests PRIVATE ${CMAKE_SOURCE_DIR}/include/fmt)
+    target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_USE_FMT FMT_HEADER_ONLY)
 endif()
-
-target_include_directories(oneplog_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/external/rapidcheck/extras/gtest/include
-)
 
 # Enable RapidCheck property-based testing / 启用 RapidCheck 属性测试
 target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_HAS_RAPIDCHECK)
+
+# Link libraries - order matters!
+target_link_libraries(oneplog_tests PRIVATE
+    oneplog
+    rapidcheck_gtest
+    rapidcheck
+    gtest_main
+    gtest
+)
 
 # ==============================================================================
 # Register Tests / 注册测试

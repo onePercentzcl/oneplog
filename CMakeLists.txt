@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 project(oneplog
-    VERSION 0.1.3
+    VERSION 0.2.0
     DESCRIPTION "High performance C++17 multi-process logging system"
     LANGUAGES CXX
 )
@@ -14,7 +14,7 @@ project(oneplog
 # Options / 构建选项
 # ==============================================================================
 option(ONEPLOG_BUILD_SHARED "Build shared library / 构建动态库" OFF)
-option(ONEPLOG_HEADER_ONLY "Header-only mode / 仅头文件模式" OFF)
+option(ONEPLOG_HEADER_ONLY "Header-only mode (no library) / 仅头文件模式" ON)
 option(ONEPLOG_BUILD_TESTS "Build tests / 构建测试" OFF)
 option(ONEPLOG_BUILD_EXAMPLES "Build examples / 构建示例" OFF)
 option(ONEPLOG_USE_FMT "Use fmt library / 使用 fmt 库" OFF)
@@ -41,7 +41,7 @@ elseif(MSVC)
 endif()
 
 # ==============================================================================
-# Source Files / 源文件
+# Header Files / 头文件
 # ==============================================================================
 set(ONEPLOG_HEADERS
     include/oneplog/common.hpp
@@ -69,14 +69,6 @@ set(ONEPLOG_HEADERS
     include/oneplog/benchmark/performance_benchmark.hpp
 )
 
-# Header-only library - no source files needed
-set(ONEPLOG_SOURCES)
-
-set(FMT_SOURCES
-    src/fmt/format.cc
-    src/fmt/os.cc
-)
-
 # ==============================================================================
 # Library Target / 库目标
 # ==============================================================================
@@ -88,9 +80,26 @@ if(ONEPLOG_HEADER_ONLY)
         $<INSTALL_INTERFACE:include>
     )
     target_compile_definitions(oneplog INTERFACE ONEPLOG_HEADER_ONLY)
+    
+    # Platform-specific libraries / 平台特定库
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(oneplog INTERFACE pthread rt)
+    elseif(UNIX AND APPLE)
+        target_link_libraries(oneplog INTERFACE pthread)
+    endif()
 else()
+    # Static or shared library with explicit template instantiations
+    # 带显式模板实例化的静态或动态库
+    set(ONEPLOG_SOURCES
+        src/oneplog/instantiations.cpp
+    )
+    
     if(ONEPLOG_BUILD_SHARED)
         add_library(oneplog SHARED ${ONEPLOG_SOURCES})
+        target_compile_definitions(oneplog 
+            PRIVATE ONEPLOG_EXPORTS
+            PUBLIC ONEPLOG_SHARED
+        )
     else()
         add_library(oneplog STATIC ${ONEPLOG_SOURCES})
     endif()
@@ -102,9 +111,9 @@ else()
     
     # Platform-specific libraries / 平台特定库
     if(UNIX AND NOT APPLE)
-        target_link_libraries(oneplog PRIVATE pthread rt)
+        target_link_libraries(oneplog PUBLIC pthread rt)
     elseif(UNIX AND APPLE)
-        target_link_libraries(oneplog PRIVATE pthread)
+        target_link_libraries(oneplog PUBLIC pthread)
     endif()
 endif()
 
@@ -112,9 +121,17 @@ endif()
 # Optional: fmt library / 可选: fmt 库
 # ==============================================================================
 if(ONEPLOG_USE_FMT)
-    find_package(fmt REQUIRED)
-    target_link_libraries(oneplog PUBLIC fmt::fmt)
-    target_compile_definitions(oneplog PUBLIC ONEPLOG_USE_FMT)
+    if(ONEPLOG_HEADER_ONLY)
+        target_compile_definitions(oneplog INTERFACE ONEPLOG_USE_FMT)
+    else()
+        target_compile_definitions(oneplog PUBLIC ONEPLOG_USE_FMT)
+        # Use bundled fmt sources (to avoid version mismatch with system fmt)
+        # 使用内置的 fmt 源码（避免与系统 fmt 版本不匹配）
+        target_sources(oneplog PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/fmt/format.cc
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/fmt/os.cc
+        )
+    endif()
 endif()
 
 # ==============================================================================
