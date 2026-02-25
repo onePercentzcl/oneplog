@@ -10,7 +10,7 @@ High Performance C++17 Multi-Process Logging System
 - **Flexible Formatting**: Console, File, JSON format support
 - **Multiple Sinks**: Console, File (with rotation), Network
 - **Color Output**: ANSI color support in Release mode
-- **fmt Library Support**: Optional fmt library for formatting
+- **fmt Library Support**: Bundled fmt library for formatting
 
 ## Quick Start
 
@@ -467,7 +467,6 @@ int main(int argc, char* argv[]) {
 | `headeronly` | Header-only mode | false |
 | `tests` | Build tests | false |
 | `examples` | Build examples | false |
-| `use_fmt` | Use fmt library | true |
 
 ### CMake Options
 
@@ -477,7 +476,6 @@ int main(int argc, char* argv[]) {
 | `ONEPLOG_HEADER_ONLY` | Header-only mode | OFF |
 | `ONEPLOG_BUILD_TESTS` | Build tests | OFF |
 | `ONEPLOG_BUILD_EXAMPLES` | Build examples | OFF |
-| `ONEPLOG_USE_FMT` | Use fmt library | OFF |
 
 ### Compile Macros
 

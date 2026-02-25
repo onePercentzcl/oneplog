@@ -11,7 +11,7 @@
 - **灵活格式化**：支持控制台、文件、JSON 格式
 - **多种输出目标**：控制台、文件（支持轮转）
 - **彩色输出**：Release 模式支持 ANSI 颜色
-- **fmt 库支持**：可选使用 fmt 库进行格式化
+- **fmt 库支持**：内置 fmt 库进行格式化
 
 ## 项目结构
 
@@ -19,7 +19,7 @@
 include/oneplog/
 ├── oneplog.hpp          # 主头文件（包含此文件即可使用所有功能）
 ├── common.hpp           # 核心类型定义（Level、Mode、ErrorCode 等）
-├── logger.hpp           # Logger 类（FastLoggerV2 模板类）
+├── logger.hpp           # LoggerImpl 模板类
 ├── name_manager.hpp     # 进程名/模块名管理
 ├── sinks/
 │   └── sink.hpp         # Sink 类型定义
@@ -28,7 +28,7 @@ include/oneplog/
     ├── log_entry.hpp            # 日志条目
     ├── heap_memory.hpp          # 堆内存环形队列
     ├── shared_memory.hpp        # 共享内存管理
-    ├── logger_config.hpp        # Logger 配置
+    ├── logger_config.hpp        # LoggerConfig 配置
     ├── static_formats.hpp       # 格式化器
     ├── pipeline_thread.hpp      # 管道线程（多进程模式）
     └── ...
@@ -141,23 +141,23 @@ int main() {
 
 int main() {
     // 使用自定义配置
-    using MyConfig = oneplog::FastLoggerConfig<
+    using MyConfig = oneplog::LoggerConfig<
         oneplog::Mode::Async,           // 异步模式
         oneplog::Level::Debug,          // Debug 级别
         false,                          // 禁用 WFC
-        true,                           // 启用时间戳
-        true,                           // 启用源位置
-        8192,                           // 缓冲区容量
-        4096,                           // 最大消息大小
-        oneplog::internal::QueueFullPolicy::DropNewest,
+        true,                           // 启用 ShadowTail 优化
+        true,                           // 使用 fmt 库
+        8192,                           // HeapRingBuffer 容量
+        8192,                           // SharedRingBuffer 容量
+        oneplog::QueueFullPolicy::DropNewest,
         oneplog::DefaultSharedMemoryName,
-        10,                             // 轮询间隔 (ms)
+        10,                             // PollTimeout (ms)
         oneplog::SinkBindingList<
             oneplog::SinkBinding<oneplog::FileSinkType, oneplog::SimpleFormat>
         >
     >;
     
-    oneplog::FastLoggerV2<MyConfig> logger;
+    oneplog::LoggerImpl<MyConfig> logger;
     logger.Info("Custom config logger");
     
     return 0;
@@ -171,12 +171,12 @@ int main() {
 
 int main() {
     // 使用文件输出的配置
-    using FileConfig = oneplog::FastLoggerConfig<
+    using FileConfig = oneplog::LoggerConfig<
         oneplog::Mode::Sync,
         oneplog::Level::Info,
         false, true, true,
-        8192, 4096,
-        oneplog::internal::QueueFullPolicy::DropNewest,
+        8192, 8192,
+        oneplog::QueueFullPolicy::DropNewest,
         oneplog::DefaultSharedMemoryName,
         10,
         oneplog::SinkBindingList<
@@ -187,12 +187,12 @@ int main() {
     // 创建文件 Sink 配置
     oneplog::FileSinkConfig fileConfig;
     fileConfig.filename = "app.log";
-    fileConfig.maxFileSize = 10 * 1024 * 1024;  // 10MB
+    fileConfig.maxSize = 10 * 1024 * 1024;  // 10MB
     fileConfig.maxFiles = 5;
     
     // 创建 Logger
-    oneplog::FastLoggerV2<FileConfig> logger(
-        oneplog::RuntimeLoggerConfig{},
+    oneplog::LoggerImpl<FileConfig> logger(
+        oneplog::RuntimeConfig{},
         oneplog::SinkBindingList<
             oneplog::SinkBinding<oneplog::FileSinkType, oneplog::SimpleFormat>
         >(fileConfig)
@@ -219,19 +219,23 @@ int main() {
 
 ```cpp
 // 同步模式
-using SyncLogger = FastLoggerV2<DefaultSyncConfig>;
+using SyncLogger = LoggerImpl<DefaultSyncConfig>;
 
 // 异步模式
-using AsyncLogger = FastLoggerV2<DefaultAsyncConfig>;
+using AsyncLogger = LoggerImpl<DefaultAsyncConfig>;
 
 // 多进程模式
-using MProcLogger = FastLoggerV2<DefaultMProcConfig>;
+using MProcLogger = LoggerImpl<DefaultMProcConfig>;
 
 // 向后兼容别名
 using Logger = SyncLogger;
 using SyncLoggerV2 = SyncLogger;
 using AsyncLoggerV2 = AsyncLogger;
 using MProcLoggerV2 = MProcLogger;
+
+// 旧版 API 兼容（已弃用）
+template<typename Config>
+using FastLoggerV2 = LoggerImpl<Config>;
 ```
 
 ## 构建选项
@@ -244,7 +248,6 @@ using MProcLoggerV2 = MProcLogger;
 | `ONEPLOG_HEADER_ONLY` | 仅头文件模式 | ON |
 | `ONEPLOG_BUILD_TESTS` | 构建测试 | OFF |
 | `ONEPLOG_BUILD_EXAMPLES` | 构建示例 | OFF |
-| `ONEPLOG_USE_FMT` | 使用 fmt 库 | OFF |
 
 ### 构建模式
 
@@ -257,9 +260,6 @@ cmake -B build -DONEPLOG_HEADER_ONLY=OFF
 
 # 动态库模式
 cmake -B build -DONEPLOG_HEADER_ONLY=OFF -DONEPLOG_BUILD_SHARED=ON
-
-# 启用 fmt 库
-cmake -B build -DONEPLOG_USE_FMT=ON
 ```
 
 ## 性能测试
@@ -272,7 +272,7 @@ cmake -B build -DONEPLOG_USE_FMT=ON
 |--------|----------------|--------|------|
 | 同步模式（Null Sink） | 1660 万 ops/sec | 1652 万 ops/sec | +0.5% |
 | 同步模式（File Sink） | 879 万 ops/sec | 860 万 ops/sec | +2% |
-| 异步模式（Null Sink） | 1577 万 ops/sec | 469 万 ops/sec | +236% |
+| 异步模式（Null Sink） | 1797 万 ops/sec | 469 万 ops/sec | +283% |
 | 异步模式（File Sink） | 1619 万 ops/sec | 480 万 ops/sec | +237% |
 
 **关键优化**：
@@ -283,9 +283,8 @@ cmake -B build -DONEPLOG_USE_FMT=ON
 
 运行性能测试：
 ```bash
-# 编译（需要 fmt 库）
-clang++ -std=c++17 -O3 -I include -I /opt/homebrew/opt/fmt/include \
-    -DONEPLOG_USE_FMT -DFMT_HEADER_ONLY \
+# 编译
+clang++ -std=c++17 -O3 -I include \
     -o benchmark_compare example/benchmark_compare.cpp -lpthread
 
 # 运行

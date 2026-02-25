@@ -10,10 +10,7 @@
 #include <oneplog/internal/heap_memory.hpp>
 #include <oneplog/internal/log_entry.hpp>
 #include <oneplog/common.hpp>
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 // Copy of NullSinkType
 struct NullSinkType {
@@ -36,7 +33,6 @@ struct StaticFormatRequirements {
 struct MessageOnlyFormat {
     using Requirements = StaticFormatRequirements<false, false, false, false>;
 
-#ifdef ONEPLOG_USE_FMT
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, oneplog::Level, uint64_t, uint32_t, uint32_t,
                          const char* fmt, Args&&... args) {
@@ -51,7 +47,6 @@ struct MessageOnlyFormat {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
 };
 
 // Exact copy of FastLogger template
@@ -140,12 +135,10 @@ private:
         [[maybe_unused]] uint32_t threadId = 0;
         [[maybe_unused]] uint32_t processId = 0;
 
-#ifdef ONEPLOG_USE_FMT
         fmt::memory_buffer buffer;
         FormatType::FormatTo(buffer, LogLevel, timestamp, threadId, processId,
                              fmt, std::forward<Args>(args)...);
         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
     }
 
     template<oneplog::Level LogLevel, typename... Args>
@@ -183,11 +176,9 @@ private:
                     
                     while (m_running.load(std::memory_order_relaxed) &&
                            m_ringBuffer && m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                         fmt::memory_buffer buffer;
                         FormatType::FormatEntryTo(buffer, entry);
                         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
                         hasData = true;
                     }
                     
@@ -202,11 +193,9 @@ private:
                 if (m_ringBuffer) {
                     oneplog::LogEntry entry;
                     while (m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                         fmt::memory_buffer buffer;
                         FormatType::FormatEntryTo(buffer, entry);
                         m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
                     }
                 }
                 
@@ -234,11 +223,9 @@ private:
             if (m_ringBuffer) {
                 oneplog::LogEntry entry;
                 while (m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                     fmt::memory_buffer buffer;
                     FormatType::FormatEntryTo(buffer, entry);
                     m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
                 }
             }
         }

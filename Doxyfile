@@ -78,7 +78,6 @@ EXPAND_ONLY_PREDEF     = NO
 SEARCH_INCLUDES        = YES
 INCLUDE_PATH           = include
 PREDEFINED             = ONEPLOG_HEADER_ONLY \
-                         ONEPLOG_USE_FMT \
                          NDEBUG
 
 # Diagrams / 图表

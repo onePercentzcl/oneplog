@@ -32,10 +32,7 @@
 #include "oneplog/internal/shared_memory.hpp"
 #include "oneplog/internal/pipeline_thread.hpp"
 #include "oneplog/internal/static_formats.hpp"
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -61,8 +58,8 @@ struct HighPerformanceConfig;
 // ==============================================================================
 
 /**
- * @brief Runtime configuration for FastLogger
- * @brief FastLogger 的运行时配置
+ * @brief Runtime configuration for Logger
+ * @brief Logger 的运行时配置
  *
  * Contains configuration options that can be set at runtime.
  * 包含可在运行时设置的配置选项。
@@ -79,7 +76,7 @@ struct RuntimeConfig {
     /// Enable colored output / 启用彩色输出
     bool colorEnabled{true};
     
-    /// Enable dynamic name resolution / 启用动态名称解析
+    /// Enable dynamic name resolution (reserved for future use) / 启用动态名称解析（保留字段，暂未使用）
     bool dynamicNameResolution{true};
 };
 
@@ -153,33 +150,33 @@ inline uint32_t GetCurrentProcessId() noexcept {
 }  // namespace internal
 
 // ==============================================================================
-// FastLogger Class / 快速日志器类
+// Logger Class / 日志器类
 // ==============================================================================
 
 /**
  * @brief High-performance template-based logger with compile-time configuration
  * @brief 使用编译期配置的高性能模板化日志器
  *
- * FastLogger is the main logging class that provides:
+ * Logger is the main logging class that provides:
  * - Compile-time type resolution for zero virtual call overhead
  * - Multi-sink support via SinkBindingList
  * - Three operating modes: Sync, Async, MProc
  * - Compile-time log level filtering
  * - WFC (Wait For Completion) support
  *
- * FastLogger 是主要的日志类，提供：
+ * Logger 是主要的日志类，提供：
  * - 编译期类型解析，实现零虚函数调用开销
  * - 通过 SinkBindingList 支持多 Sink
  * - 三种运行模式：Sync、Async、MProc
  * - 编译期日志级别过滤
  * - WFC（等待完成）支持
  *
- * @tparam Config The compile-time configuration type (FastLoggerConfig)
+ * @tparam Config The compile-time configuration type (LoggerConfig)
  *
  * _Requirements: 2.1, 2.2_
  */
-template<typename Config = FastLoggerConfig<>>
-class FastLoggerV2 {
+template<typename Config = LoggerConfig<>>
+class LoggerImpl {
 public:
     // =========================================================================
     // Type Aliases and Compile-time Constants / 类型别名和编译期常量
@@ -246,7 +243,7 @@ public:
      *
      * _Requirements: 11.1, 13.1_
      */
-    FastLoggerV2() : m_sinkBindings{}, m_runtimeConfig{} {
+    LoggerImpl() : m_sinkBindings{}, m_runtimeConfig{} {
         Initialize();
     }
     
@@ -258,7 +255,7 @@ public:
      *
      * _Requirements: 11.1, 13.1_
      */
-    explicit FastLoggerV2(const RuntimeConfig& config)
+    explicit LoggerImpl(const RuntimeConfig& config)
         : m_sinkBindings{}
         , m_runtimeConfig(config) {
         Initialize();
@@ -272,7 +269,7 @@ public:
      *
      * _Requirements: 11.1, 13.2_
      */
-    explicit FastLoggerV2(SinkBindings bindings)
+    explicit LoggerImpl(SinkBindings bindings)
         : m_sinkBindings(std::move(bindings))
         , m_runtimeConfig{} {
         Initialize();
@@ -287,7 +284,7 @@ public:
      *
      * _Requirements: 11.1, 13.1, 13.2_
      */
-    FastLoggerV2(SinkBindings bindings, const RuntimeConfig& config)
+    LoggerImpl(SinkBindings bindings, const RuntimeConfig& config)
         : m_sinkBindings(std::move(bindings))
         , m_runtimeConfig(config) {
         Initialize();
@@ -309,7 +306,7 @@ public:
      *
      * _Requirements: 11.2, 13.1, 13.2_
      */
-    ~FastLoggerV2() {
+    ~LoggerImpl() {
         // Must stop worker before any member is destroyed
         if constexpr (kMode == Mode::MProc) {
             StopMProcWorker();
@@ -328,10 +325,10 @@ public:
     // =========================================================================
     
     /// Deleted copy constructor / 删除的拷贝构造函数
-    FastLoggerV2(const FastLoggerV2&) = delete;
+    LoggerImpl(const LoggerImpl&) = delete;
     
     /// Deleted copy assignment / 删除的拷贝赋值
-    FastLoggerV2& operator=(const FastLoggerV2&) = delete;
+    LoggerImpl& operator=(const LoggerImpl&) = delete;
     
     /**
      * @brief Move constructor
@@ -347,7 +344,7 @@ public:
      *
      * _Requirements: 11.3_
      */
-    FastLoggerV2(FastLoggerV2&& other) noexcept
+    LoggerImpl(LoggerImpl&& other) noexcept
         : m_sinkBindings(std::move(other.m_sinkBindings))
         , m_runtimeConfig(std::move(other.m_runtimeConfig))
         , m_ringBuffer(nullptr)
@@ -402,7 +399,7 @@ public:
      *
      * _Requirements: 11.4_
      */
-    FastLoggerV2& operator=(FastLoggerV2&& other) noexcept {
+    LoggerImpl& operator=(LoggerImpl&& other) noexcept {
         if (this != &other) {
             // Stop our workers and clean up
             if constexpr (kMode == Mode::MProc) {
@@ -833,15 +830,15 @@ public:
     }
     
     /**
-     * @brief Register a thread name in the shared name table (MProc mode only)
-     * @brief 在共享名称表中注册线程名称（仅 MProc 模式）
+     * @brief Register a module name in the shared name table (MProc mode only)
+     * @brief 在共享名称表中注册模块名称（仅 MProc 模式）
      *
-     * @param name Thread name to register / 要注册的线程名称
-     * @return Registered thread ID, or 0 if failed / 注册的线程 ID，失败返回 0
+     * @param name Module name to register / 要注册的模块名称
+     * @return Registered module ID, or 0 if failed / 注册的模块 ID，失败返回 0
      *
      * _Requirements: 5.7_
      */
-    uint32_t RegisterThread(const std::string& name) noexcept {
+    uint32_t RegisterModule(const std::string& name) noexcept {
         if constexpr (kMode == Mode::MProc) {
             return m_sharedMemory ? m_sharedMemory->RegisterThread(name) : 0;
         }
@@ -865,19 +862,57 @@ public:
     }
     
     /**
+     * @brief Get module name by ID from the shared name table (MProc mode only)
+     * @brief 从共享名称表中通过 ID 获取模块名称（仅 MProc 模式）
+     *
+     * @param id Module ID / 模块 ID
+     * @return Module name, or nullptr if not found / 模块名称，未找到返回 nullptr
+     *
+     * _Requirements: 5.7_
+     */
+    const char* GetModuleName(uint32_t id) const noexcept {
+        if constexpr (kMode == Mode::MProc) {
+            return m_sharedMemory ? m_sharedMemory->GetThreadName(id) : nullptr;
+        }
+        return nullptr;
+    }
+    
+    // =========================================================================
+    // Deprecated Methods (for backward compatibility) / 已弃用方法（向后兼容）
+    // =========================================================================
+    
+    /**
+     * @brief Register a thread name in the shared name table (MProc mode only)
+     * @brief 在共享名称表中注册线程名称（仅 MProc 模式）
+     *
+     * @deprecated Use RegisterModule() instead. This method actually registers module names.
+     * @deprecated 请使用 RegisterModule()。此方法实际上注册的是模块名称。
+     *
+     * @param name Thread name to register / 要注册的线程名称
+     * @return Registered thread ID, or 0 if failed / 注册的线程 ID，失败返回 0
+     *
+     * _Requirements: 5.7_
+     */
+    [[deprecated("Use RegisterModule() instead")]]
+    uint32_t RegisterThread(const std::string& name) noexcept {
+        return RegisterModule(name);
+    }
+    
+    /**
      * @brief Get thread name by ID from the shared name table (MProc mode only)
      * @brief 从共享名称表中通过 ID 获取线程名称（仅 MProc 模式）
+     *
+     * @deprecated Use GetModuleName(uint32_t) instead. This method actually returns module names.
+     * @deprecated 请使用 GetModuleName(uint32_t)。此方法实际上返回的是模块名称。
      *
      * @param id Thread ID / 线程 ID
      * @return Thread name, or nullptr if not found / 线程名称，未找到返回 nullptr
      *
      * _Requirements: 5.7_
      */
+    [[deprecated("Use GetModuleName(uint32_t) instead")]]
     const char* GetThreadName(uint32_t id) const noexcept {
-        if constexpr (kMode == Mode::MProc) {
-            return m_sharedMemory ? m_sharedMemory->GetThreadName(id) : nullptr;
-        }
-        return nullptr;
+        return GetModuleName(id);
     }
 
 private:
@@ -1482,7 +1517,7 @@ private:
  *
  * _Requirements: 16.1, 16.5_
  */
-struct DefaultSyncConfig : FastLoggerConfig<
+struct DefaultSyncConfig : LoggerConfig<
     Mode::Sync,
     kDefaultLevel,
     false,  // EnableWFC
@@ -1490,7 +1525,7 @@ struct DefaultSyncConfig : FastLoggerConfig<
     true,   // UseFmt
     8192,   // HeapRingBufferCapacity (unused in sync)
     4096,   // SharedRingBufferCapacity (unused in sync)
-    QueueFullPolicy::DropNewest,
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
     10,     // PollTimeoutMs
     DefaultSinkBindings  // Console + SimpleFormat
@@ -1513,7 +1548,7 @@ struct DefaultSyncConfig : FastLoggerConfig<
  *
  * _Requirements: 16.2, 16.5_
  */
-struct DefaultAsyncConfig : FastLoggerConfig<
+struct DefaultAsyncConfig : LoggerConfig<
     Mode::Async,
     kDefaultLevel,
     false,  // EnableWFC
@@ -1521,7 +1556,7 @@ struct DefaultAsyncConfig : FastLoggerConfig<
     true,   // UseFmt
     8192,   // HeapRingBufferCapacity
     4096,   // SharedRingBufferCapacity
-    QueueFullPolicy::DropNewest,
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
     10,     // PollTimeoutMs
     DefaultSinkBindings  // Console + SimpleFormat
@@ -1545,7 +1580,7 @@ struct DefaultAsyncConfig : FastLoggerConfig<
  *
  * _Requirements: 16.3, 16.5_
  */
-struct DefaultMProcConfig : FastLoggerConfig<
+struct DefaultMProcConfig : LoggerConfig<
     Mode::MProc,
     kDefaultLevel,
     false,  // EnableWFC
@@ -1553,7 +1588,7 @@ struct DefaultMProcConfig : FastLoggerConfig<
     true,   // UseFmt
     8192,   // HeapRingBufferCapacity
     4096,   // SharedRingBufferCapacity
-    QueueFullPolicy::DropNewest,
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
     10,     // PollTimeoutMs
     DefaultSinkBindings  // Console + SimpleFormat
@@ -1580,7 +1615,7 @@ struct DefaultMProcConfig : FastLoggerConfig<
  *
  * _Requirements: 16.4, 16.5_
  */
-struct HighPerformanceConfig : FastLoggerConfig<
+struct HighPerformanceConfig : LoggerConfig<
     Mode::Async,
     Level::Info,
     false,  // EnableWFC
@@ -1588,7 +1623,7 @@ struct HighPerformanceConfig : FastLoggerConfig<
     true,   // UseFmt
     8192,   // HeapRingBufferCapacity
     4096,   // SharedRingBufferCapacity
-    QueueFullPolicy::DropNewest,
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
     10,     // PollTimeoutMs
     HighPerformanceSinkBindings  // NullSink + MessageOnlyFormat
@@ -1604,7 +1639,7 @@ struct HighPerformanceConfig : FastLoggerConfig<
  *
  * _Requirements: 1.7, 14.5_
  */
-using SyncLoggerV2 = FastLoggerV2<DefaultSyncConfig>;
+using SyncLoggerV2 = LoggerImpl<DefaultSyncConfig>;
 
 /**
  * @brief Async logger type alias (V2 suffix for explicit versioning)
@@ -1612,7 +1647,7 @@ using SyncLoggerV2 = FastLoggerV2<DefaultSyncConfig>;
  *
  * _Requirements: 1.7, 14.5_
  */
-using AsyncLoggerV2 = FastLoggerV2<DefaultAsyncConfig>;
+using AsyncLoggerV2 = LoggerImpl<DefaultAsyncConfig>;
 
 /**
  * @brief Multi-process logger type alias (V2 suffix for explicit versioning)
@@ -1620,7 +1655,7 @@ using AsyncLoggerV2 = FastLoggerV2<DefaultAsyncConfig>;
  *
  * _Requirements: 1.7, 14.5_
  */
-using MProcLoggerV2 = FastLoggerV2<DefaultMProcConfig>;
+using MProcLoggerV2 = LoggerImpl<DefaultMProcConfig>;
 
 /**
  * @brief Sync logger type alias (without V2 suffix for convenience)
@@ -1628,7 +1663,7 @@ using MProcLoggerV2 = FastLoggerV2<DefaultMProcConfig>;
  *
  * _Requirements: 1.7, 14.5_
  */
-using SyncLogger = FastLoggerV2<DefaultSyncConfig>;
+using SyncLogger = LoggerImpl<DefaultSyncConfig>;
 
 /**
  * @brief Async logger type alias (without V2 suffix for convenience)
@@ -1636,7 +1671,7 @@ using SyncLogger = FastLoggerV2<DefaultSyncConfig>;
  *
  * _Requirements: 1.7, 14.5_
  */
-using AsyncLogger = FastLoggerV2<DefaultAsyncConfig>;
+using AsyncLogger = LoggerImpl<DefaultAsyncConfig>;
 
 /**
  * @brief Multi-process logger type alias (without V2 suffix for convenience)
@@ -1644,17 +1679,17 @@ using AsyncLogger = FastLoggerV2<DefaultAsyncConfig>;
  *
  * _Requirements: 1.7, 14.5_
  */
-using MProcLogger = FastLoggerV2<DefaultMProcConfig>;
+using MProcLogger = LoggerImpl<DefaultMProcConfig>;
 
 /**
  * @brief Backward-compatible Logger type alias
  * @brief 向后兼容的 Logger 类型别名
  *
  * This template alias provides backward compatibility with the old Logger API.
- * It maps the old template parameters to the new FastLoggerV2 configuration.
+ * It maps the old template parameters to the new LoggerImpl configuration.
  *
  * 此模板别名提供与旧 Logger API 的向后兼容性。
- * 它将旧的模板参数映射到新的 FastLoggerV2 配置。
+ * 它将旧的模板参数映射到新的 LoggerImpl 配置。
  *
  * @tparam M Operating mode (default: Async)
  * @tparam L Minimum log level (default: kDefaultLevel)
@@ -1667,10 +1702,23 @@ template<Mode M = Mode::Async,
          Level L = kDefaultLevel,
          bool EnableWFC = false, 
          bool EnableShadowTail = true>
-using Logger = FastLoggerV2<FastLoggerConfig<
+using Logger = LoggerImpl<LoggerConfig<
     M, L, EnableWFC, EnableShadowTail, true,
-    8192, 4096, QueueFullPolicy::DropNewest,
+    8192, 8192, QueueFullPolicy::Block,
     DefaultSharedMemoryName, 10, DefaultSinkBindings
 >>;
+
+// ==============================================================================
+// Backward Compatibility Aliases / 向后兼容别名
+// ==============================================================================
+
+/**
+ * @brief Backward-compatible FastLoggerV2 type alias
+ * @brief 向后兼容的 FastLoggerV2 类型别名
+ *
+ * @deprecated Use LoggerImpl instead
+ */
+template<typename Config = LoggerConfig<>>
+using FastLoggerV2 = LoggerImpl<Config>;
 
 }  // namespace oneplog

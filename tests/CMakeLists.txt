@@ -40,15 +40,11 @@ target_include_directories(oneplog_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/rapidcheck/extras/gtest/include
 )
 
-# Link fmt if enabled (using local fmt sources)
-if(ONEPLOG_USE_FMT)
-    target_sources(oneplog_tests PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/fmt/format.cc
-        ${CMAKE_SOURCE_DIR}/src/fmt/os.cc
-    )
-    target_include_directories(oneplog_tests PRIVATE ${CMAKE_SOURCE_DIR}/include/fmt)
-    target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_USE_FMT FMT_HEADER_ONLY)
-endif()
+# Add bundled fmt sources / 添加内置 fmt 源码
+target_sources(oneplog_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/fmt/format.cc
+    ${CMAKE_SOURCE_DIR}/src/fmt/os.cc
+)
 
 # Enable RapidCheck property-based testing / 启用 RapidCheck 属性测试
 target_compile_definitions(oneplog_tests PRIVATE ONEPLOG_HAS_RAPIDCHECK)

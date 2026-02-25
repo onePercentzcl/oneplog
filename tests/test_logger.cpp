@@ -32,7 +32,6 @@ namespace {
 struct TestMessageOnlyFormat {
     using Requirements = StaticFormatRequirements<false, false, false, false, false>;
     
-#ifdef ONEPLOG_USE_FMT
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level, uint64_t, uint32_t, uint32_t,
                          const char* fmt, Args&&... args) {
@@ -47,7 +46,6 @@ struct TestMessageOnlyFormat {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
     
     static std::string FormatEntry(const LogEntry& entry) {
         return entry.snapshot.FormatAll();
@@ -1005,7 +1003,7 @@ TEST(FastLoggerV2DefaultConfigTest, DefaultSyncConfig) {
     static_assert(DefaultSyncConfig::kUseFmt == true);
     static_assert(DefaultSyncConfig::kHeapRingBufferCapacity == 8192);
     static_assert(DefaultSyncConfig::kSharedRingBufferCapacity == 4096);
-    static_assert(DefaultSyncConfig::kQueueFullPolicy == QueueFullPolicy::DropNewest);
+    static_assert(DefaultSyncConfig::kQueueFullPolicy == QueueFullPolicy::Block);
     
     // Verify SinkBindings type
     static_assert(DefaultSyncConfig::SinkBindings::kBindingCount == 1);
@@ -1037,7 +1035,7 @@ TEST(FastLoggerV2DefaultConfigTest, DefaultAsyncConfig) {
     static_assert(DefaultAsyncConfig::kUseFmt == true);
     static_assert(DefaultAsyncConfig::kHeapRingBufferCapacity == 8192);
     static_assert(DefaultAsyncConfig::kSharedRingBufferCapacity == 4096);
-    static_assert(DefaultAsyncConfig::kQueueFullPolicy == QueueFullPolicy::DropNewest);
+    static_assert(DefaultAsyncConfig::kQueueFullPolicy == QueueFullPolicy::Block);
     
     // Verify SinkBindings type
     static_assert(DefaultAsyncConfig::SinkBindings::kBindingCount == 1);
@@ -1070,7 +1068,7 @@ TEST(FastLoggerV2DefaultConfigTest, DefaultMProcConfig) {
     static_assert(DefaultMProcConfig::kUseFmt == true);
     static_assert(DefaultMProcConfig::kHeapRingBufferCapacity == 8192);
     static_assert(DefaultMProcConfig::kSharedRingBufferCapacity == 4096);
-    static_assert(DefaultMProcConfig::kQueueFullPolicy == QueueFullPolicy::DropNewest);
+    static_assert(DefaultMProcConfig::kQueueFullPolicy == QueueFullPolicy::Block);
     
     // Verify SinkBindings type
     static_assert(DefaultMProcConfig::SinkBindings::kBindingCount == 1);

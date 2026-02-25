@@ -10,10 +10,7 @@
 #include <oneplog/internal/heap_memory.hpp>
 #include <oneplog/internal/log_entry.hpp>
 #include <oneplog/common.hpp>
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 // Copy of NullSinkType
 struct NullSinkType {
@@ -91,12 +88,10 @@ private:
                 
                 while (m_running.load(std::memory_order_relaxed) &&
                        m_ringBuffer && m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                     fmt::memory_buffer buffer;
                     std::string msg = entry.snapshot.FormatAll();
                     buffer.append(std::string_view(msg));
                     m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
                     hasData = true;
                 }
                 
@@ -111,12 +106,10 @@ private:
             if (m_ringBuffer) {
                 oneplog::LogEntry entry;
                 while (m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                     fmt::memory_buffer buffer;
                     std::string msg = entry.snapshot.FormatAll();
                     buffer.append(std::string_view(msg));
                     m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
                 }
             }
             
@@ -142,12 +135,10 @@ private:
         if (m_ringBuffer) {
             oneplog::LogEntry entry;
             while (m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                 fmt::memory_buffer buffer;
                 std::string msg = entry.snapshot.FormatAll();
                 buffer.append(std::string_view(msg));
                 m_sink.Write(std::string_view(buffer.data(), buffer.size()));
-#endif
             }
         }
     }

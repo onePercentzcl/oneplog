@@ -24,10 +24,7 @@
 #include "oneplog/common.hpp"
 #include "oneplog/internal/log_entry.hpp"
 #include "oneplog/internal/heap_memory.hpp"
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 namespace oneplog {
 
@@ -162,7 +159,6 @@ struct SinkBinding {
                    uint32_t threadId, uint32_t processId,
                    const char* fmt, Args&&... args) noexcept {
         try {
-#ifdef ONEPLOG_USE_FMT
             if constexpr (UseFmt) {
                 fmt::memory_buffer buffer;
                 FormatT::FormatTo(buffer, level, timestamp, threadId, processId,
@@ -180,19 +176,6 @@ struct SinkBinding {
                                                        processId, snapshot);
                 sink.Write(msg);
             }
-#else
-            // When ONEPLOG_USE_FMT is not defined, always use non-fmt fallback
-            // 当 ONEPLOG_USE_FMT 未定义时，始终使用非 fmt 回退实现
-            (void)UseFmt;  // Suppress unused warning
-            BinarySnapshot snapshot;
-            snapshot.CaptureStringView(std::string_view(fmt));
-            if constexpr (sizeof...(Args) > 0) {
-                snapshot.Capture(std::forward<Args>(args)...);
-            }
-            std::string msg = FormatT::FormatEntry(level, timestamp, threadId, 
-                                                   processId, snapshot);
-            sink.Write(msg);
-#endif
         } catch (...) {
             // Silently ignore errors in logging
         }
@@ -208,23 +191,16 @@ struct SinkBinding {
     template<bool UseFmt = true>
     void WriteAsync(const LogEntry& entry) noexcept {
         try {
-#ifdef ONEPLOG_USE_FMT
             if constexpr (UseFmt) {
                 fmt::memory_buffer buffer;
                 FormatT::FormatEntryTo(buffer, entry);
                 sink.Write(std::string_view(buffer.data(), buffer.size()));
             } else {
                 // Non-fmt fallback
+                // 非 fmt 回退实现
                 std::string msg = FormatT::FormatEntry(entry);
                 sink.Write(msg);
             }
-#else
-            // When ONEPLOG_USE_FMT is not defined, always use non-fmt fallback
-            // 当 ONEPLOG_USE_FMT 未定义时，始终使用非 fmt 回退实现
-            (void)UseFmt;  // Suppress unused warning
-            std::string msg = FormatT::FormatEntry(entry);
-            sink.Write(msg);
-#endif
         } catch (...) {
             // Silently ignore errors in logging
         }
@@ -424,19 +400,19 @@ struct DefaultSharedMemoryName {
 };
 
 // ==============================================================================
-// FastLoggerConfig - 编译期配置聚合
+// LoggerConfig - 编译期配置聚合
 // ==============================================================================
 
 /**
- * @brief Compile-time configuration aggregation for FastLogger
- * @brief FastLogger 的编译期配置聚合
+ * @brief Compile-time configuration aggregation for Logger
+ * @brief Logger 的编译期配置聚合
  *
- * FastLoggerConfig aggregates all compile-time configuration options into a
- * single template structure. This allows FastLogger to be configured entirely
+ * LoggerConfig aggregates all compile-time configuration options into a
+ * single template structure. This allows Logger to be configured entirely
  * at compile time, enabling maximum optimization.
  *
- * FastLoggerConfig 将所有编译期配置选项聚合到单一模板结构中。这允许
- * FastLogger 完全在编译期配置，实现最大程度的优化。
+ * LoggerConfig 将所有编译期配置选项聚合到单一模板结构中。这允许
+ * Logger 完全在编译期配置，实现最大程度的优化。
  *
  * @tparam M Operating mode (Sync/Async/MProc) / 运行模式
  * @tparam L Minimum log level / 最小日志级别
@@ -459,13 +435,13 @@ template<
     bool EnableShadowTail = true,
     bool UseFmt = true,
     size_t HeapRingBufferCapacity = 8192,
-    size_t SharedRingBufferCapacity = 4096,
-    QueueFullPolicy Policy = QueueFullPolicy::DropNewest,
+    size_t SharedRingBufferCapacity = 8192,
+    QueueFullPolicy Policy = QueueFullPolicy::Block,
     typename SharedMemoryNameT = DefaultSharedMemoryName,
     int64_t PollTimeoutMs = 10,
     typename SinkBindingsT = SinkBindingList<>
 >
-struct FastLoggerConfig {
+struct LoggerConfig {
     // =========================================================================
     // Mode configuration / 模式配置
     // =========================================================================
@@ -525,8 +501,8 @@ struct FastLoggerConfig {
 // ==============================================================================
 
 /**
- * @brief Helper to create a FastLoggerConfig with custom SinkBindings
- * @brief 创建带有自定义 SinkBindings 的 FastLoggerConfig 的辅助模板
+ * @brief Helper to create a LoggerConfig with custom SinkBindings
+ * @brief 创建带有自定义 SinkBindings 的 LoggerConfig 的辅助模板
  */
 template<typename SinkBindingsT,
          Mode M = Mode::Sync,
@@ -534,52 +510,104 @@ template<typename SinkBindingsT,
          bool EnableWFC = false,
          bool EnableShadowTail = true,
          bool UseFmt = true>
-using FastLoggerConfigWithSinks = FastLoggerConfig<
+using LoggerConfigWithSinks = LoggerConfig<
     M, L, EnableWFC, EnableShadowTail, UseFmt,
-    8192, 4096, QueueFullPolicy::DropNewest,
+    8192, 8192, QueueFullPolicy::Block,
     DefaultSharedMemoryName, 10, SinkBindingsT
 >;
 
 /**
- * @brief Helper to create an async FastLoggerConfig
- * @brief 创建异步 FastLoggerConfig 的辅助模板
+ * @brief Helper to create an async LoggerConfig
+ * @brief 创建异步 LoggerConfig 的辅助模板
  */
 template<typename SinkBindingsT,
          Level L = kDefaultLevel,
          bool EnableWFC = false,
          bool EnableShadowTail = true,
          size_t BufferCapacity = 8192>
-using AsyncFastLoggerConfig = FastLoggerConfig<
+using AsyncLoggerConfig = LoggerConfig<
     Mode::Async, L, EnableWFC, EnableShadowTail, true,
-    BufferCapacity, 4096, QueueFullPolicy::DropNewest,
+    BufferCapacity, 8192, QueueFullPolicy::Block,
     DefaultSharedMemoryName, 10, SinkBindingsT
 >;
 
 /**
- * @brief Helper to create a sync FastLoggerConfig
- * @brief 创建同步 FastLoggerConfig 的辅助模板
+ * @brief Helper to create a sync LoggerConfig
+ * @brief 创建同步 LoggerConfig 的辅助模板
  */
 template<typename SinkBindingsT,
          Level L = kDefaultLevel>
-using SyncFastLoggerConfig = FastLoggerConfig<
+using SyncLoggerConfig = LoggerConfig<
     Mode::Sync, L, false, false, true,
-    8192, 4096, QueueFullPolicy::DropNewest,
+    8192, 8192, QueueFullPolicy::Block,
     DefaultSharedMemoryName, 10, SinkBindingsT
 >;
 
 /**
- * @brief Helper to create a multi-process FastLoggerConfig
- * @brief 创建多进程 FastLoggerConfig 的辅助模板
+ * @brief Helper to create a multi-process LoggerConfig
+ * @brief 创建多进程 LoggerConfig 的辅助模板
  */
 template<typename SinkBindingsT,
          typename SharedMemoryNameT,
          Level L = kDefaultLevel,
          bool EnableWFC = false,
          bool EnableShadowTail = true>
-using MProcFastLoggerConfig = FastLoggerConfig<
+using MProcLoggerConfig = LoggerConfig<
     Mode::MProc, L, EnableWFC, EnableShadowTail, true,
-    8192, 4096, QueueFullPolicy::DropNewest,
+    8192, 8192, QueueFullPolicy::Block,
     SharedMemoryNameT, 10, SinkBindingsT
 >;
+
+// ==============================================================================
+// Backward Compatibility Aliases / 向后兼容别名
+// ==============================================================================
+
+/// @deprecated Use LoggerConfig instead
+template<
+    Mode M = Mode::Sync,
+    Level L = kDefaultLevel,
+    bool EnableWFC = false,
+    bool EnableShadowTail = true,
+    bool UseFmt = true,
+    size_t HeapRingBufferCapacity = 8192,
+    size_t SharedRingBufferCapacity = 8192,
+    QueueFullPolicy Policy = QueueFullPolicy::Block,
+    typename SharedMemoryNameT = DefaultSharedMemoryName,
+    int64_t PollTimeoutMs = 10,
+    typename SinkBindingsT = SinkBindingList<>
+>
+using FastLoggerConfig = LoggerConfig<M, L, EnableWFC, EnableShadowTail, UseFmt,
+    HeapRingBufferCapacity, SharedRingBufferCapacity, Policy,
+    SharedMemoryNameT, PollTimeoutMs, SinkBindingsT>;
+
+/// @deprecated Use LoggerConfigWithSinks instead
+template<typename SinkBindingsT,
+         Mode M = Mode::Sync,
+         Level L = kDefaultLevel,
+         bool EnableWFC = false,
+         bool EnableShadowTail = true,
+         bool UseFmt = true>
+using FastLoggerConfigWithSinks = LoggerConfigWithSinks<SinkBindingsT, M, L, EnableWFC, EnableShadowTail, UseFmt>;
+
+/// @deprecated Use AsyncLoggerConfig instead
+template<typename SinkBindingsT,
+         Level L = kDefaultLevel,
+         bool EnableWFC = false,
+         bool EnableShadowTail = true,
+         size_t BufferCapacity = 8192>
+using AsyncFastLoggerConfig = AsyncLoggerConfig<SinkBindingsT, L, EnableWFC, EnableShadowTail, BufferCapacity>;
+
+/// @deprecated Use SyncLoggerConfig instead
+template<typename SinkBindingsT,
+         Level L = kDefaultLevel>
+using SyncFastLoggerConfig = SyncLoggerConfig<SinkBindingsT, L>;
+
+/// @deprecated Use MProcLoggerConfig instead
+template<typename SinkBindingsT,
+         typename SharedMemoryNameT,
+         Level L = kDefaultLevel,
+         bool EnableWFC = false,
+         bool EnableShadowTail = true>
+using MProcFastLoggerConfig = MProcLoggerConfig<SinkBindingsT, SharedMemoryNameT, L, EnableWFC, EnableShadowTail>;
 
 }  // namespace oneplog

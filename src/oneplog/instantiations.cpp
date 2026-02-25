@@ -22,20 +22,20 @@ namespace oneplog {
 // ==============================================================================
 
 // SyncLogger with ConsoleSink / 带控制台输出的同步日志器
-template class FastLoggerV2<DefaultSyncConfig>;
+template class LoggerImpl<DefaultSyncConfig>;
 
 // SyncLogger with FileSink / 带文件输出的同步日志器
-template class FastLoggerV2<FastLoggerConfig<
+template class LoggerImpl<LoggerConfig<
     Mode::Sync,
     Level::Debug,
     false,  // EnableWFC
-    true,   // EnableTimestamp
-    true,   // EnableSourceLocation
-    8192,   // BufferCapacity
-    4096,   // MaxMessageSize
-    internal::QueueFullPolicy::DropNewest,
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    8192,   // SharedRingBufferCapacity
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
-    10,     // PollIntervalMs
+    10,     // PollTimeoutMs
     SinkBindingList<SinkBinding<FileSinkType, SimpleFormat>>
 >>;
 
@@ -44,20 +44,20 @@ template class FastLoggerV2<FastLoggerConfig<
 // ==============================================================================
 
 // AsyncLogger with ConsoleSink / 带控制台输出的异步日志器
-template class FastLoggerV2<DefaultAsyncConfig>;
+template class LoggerImpl<DefaultAsyncConfig>;
 
 // AsyncLogger with FileSink / 带文件输出的异步日志器
-template class FastLoggerV2<FastLoggerConfig<
+template class LoggerImpl<LoggerConfig<
     Mode::Async,
     Level::Debug,
     false,  // EnableWFC
-    true,   // EnableTimestamp
-    true,   // EnableSourceLocation
-    8192,   // BufferCapacity
-    4096,   // MaxMessageSize
-    internal::QueueFullPolicy::DropNewest,
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    8192,   // SharedRingBufferCapacity
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
-    10,     // PollIntervalMs
+    10,     // PollTimeoutMs
     SinkBindingList<SinkBinding<FileSinkType, SimpleFormat>>
 >>;
 
@@ -66,7 +66,22 @@ template class FastLoggerV2<FastLoggerConfig<
 // ==============================================================================
 
 // MProcLogger with ConsoleSink / 带控制台输出的多进程日志器
-template class FastLoggerV2<DefaultMProcConfig>;
+template class LoggerImpl<DefaultMProcConfig>;
+
+// MProcLogger with FileSink / 带文件输出的多进程日志器
+template class LoggerImpl<LoggerConfig<
+    Mode::MProc,
+    Level::Debug,
+    false,  // EnableWFC
+    true,   // EnableShadowTail
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    8192,   // SharedRingBufferCapacity
+    QueueFullPolicy::Block,
+    DefaultSharedMemoryName,
+    10,     // PollTimeoutMs
+    SinkBindingList<SinkBinding<FileSinkType, SimpleFormat>>
+>>;
 
 // ==============================================================================
 // Explicit Instantiations for High Performance Configs / 高性能配置的显式实例化
@@ -74,33 +89,33 @@ template class FastLoggerV2<DefaultMProcConfig>;
 
 // High performance sync logger (minimal overhead)
 // 高性能同步日志器（最小开销）
-template class FastLoggerV2<FastLoggerConfig<
+template class LoggerImpl<LoggerConfig<
     Mode::Sync,
     Level::Info,
     false,  // EnableWFC
-    false,  // EnableTimestamp (disabled for performance)
-    false,  // EnableSourceLocation (disabled for performance)
-    8192,   // BufferCapacity
-    4096,   // MaxMessageSize
-    internal::QueueFullPolicy::DropNewest,
+    false,  // EnableShadowTail (disabled for performance)
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    8192,   // SharedRingBufferCapacity
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
-    10,     // PollIntervalMs
+    10,     // PollTimeoutMs
     SinkBindingList<SinkBinding<NullSinkType, SimpleFormat>>
 >>;
 
 // High performance async logger (minimal overhead)
 // 高性能异步日志器（最小开销）
-template class FastLoggerV2<FastLoggerConfig<
+template class LoggerImpl<LoggerConfig<
     Mode::Async,
     Level::Info,
     false,  // EnableWFC
-    false,  // EnableTimestamp (disabled for performance)
-    false,  // EnableSourceLocation (disabled for performance)
-    8192,   // BufferCapacity
-    4096,   // MaxMessageSize
-    internal::QueueFullPolicy::DropNewest,
+    false,  // EnableShadowTail (disabled for performance)
+    true,   // UseFmt
+    8192,   // HeapRingBufferCapacity
+    8192,   // SharedRingBufferCapacity
+    QueueFullPolicy::Block,
     DefaultSharedMemoryName,
-    10,     // PollIntervalMs
+    10,     // PollTimeoutMs
     SinkBindingList<SinkBinding<NullSinkType, SimpleFormat>>
 >>;
 

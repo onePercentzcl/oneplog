@@ -69,7 +69,6 @@ TEST(StaticFormatRequirementsTest, Presets) {
 struct MockFormat1 {
     using Requirements = StaticFormatRequirements<true, true, false, false, false>;
     
-#ifdef ONEPLOG_USE_FMT
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level, uint64_t, uint32_t, uint32_t,
                          const char* fmt, Args&&...) {
@@ -80,7 +79,6 @@ struct MockFormat1 {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
     
     static std::string FormatEntry(const LogEntry& entry) {
         return entry.snapshot.FormatAll();
@@ -95,7 +93,6 @@ struct MockFormat1 {
 struct MockFormat2 {
     using Requirements = StaticFormatRequirements<false, true, true, true, false>;
     
-#ifdef ONEPLOG_USE_FMT
     template<typename... Args>
     static void FormatTo(fmt::memory_buffer& buffer, Level, uint64_t, uint32_t, uint32_t,
                          const char* fmt, Args&&...) {
@@ -106,7 +103,6 @@ struct MockFormat2 {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
     
     static std::string FormatEntry(const LogEntry& entry) {
         return entry.snapshot.FormatAll();
@@ -235,8 +231,8 @@ TEST(FastLoggerConfigTest, DefaultValues) {
     EXPECT_TRUE(Config::kEnableShadowTail);
     EXPECT_TRUE(Config::kUseFmt);
     EXPECT_EQ(Config::kHeapRingBufferCapacity, 8192u);
-    EXPECT_EQ(Config::kSharedRingBufferCapacity, 4096u);
-    EXPECT_EQ(Config::kQueueFullPolicy, QueueFullPolicy::DropNewest);
+    EXPECT_EQ(Config::kSharedRingBufferCapacity, 8192u);
+    EXPECT_EQ(Config::kQueueFullPolicy, QueueFullPolicy::Block);
     EXPECT_EQ(Config::kPollTimeout.count(), 10);
 }
 

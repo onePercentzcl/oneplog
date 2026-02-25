@@ -9,10 +9,7 @@
 #include <memory>
 #include <oneplog/internal/heap_memory.hpp>
 #include <oneplog/internal/log_entry.hpp>
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 // Simulate FastLogger's worker thread pattern
 class TestAsyncLogger {
@@ -64,12 +61,10 @@ private:
                 
                 while (m_running.load(std::memory_order_relaxed) &&
                        m_ringBuffer && m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                     fmt::memory_buffer buffer;
                     // Format the entry - this is where the crash might happen
                     std::string msg = entry.snapshot.FormatAll();
                     buffer.append(std::string_view(msg));
-#endif
                     hasData = true;
                 }
                 
@@ -85,11 +80,9 @@ private:
             if (m_ringBuffer) {
                 oneplog::LogEntry entry;
                 while (m_ringBuffer->TryPop(entry)) {
-#ifdef ONEPLOG_USE_FMT
                     fmt::memory_buffer buffer;
                     std::string msg = entry.snapshot.FormatAll();
                     buffer.append(std::string_view(msg));
-#endif
                 }
             }
         });

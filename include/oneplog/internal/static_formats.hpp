@@ -27,10 +27,7 @@
 #include "oneplog/common.hpp"
 #include "oneplog/internal/logger_config.hpp"
 #include "oneplog/internal/log_entry.hpp"
-
-#ifdef ONEPLOG_USE_FMT
 #include <fmt/format.h>
-#endif
 
 namespace oneplog {
 
@@ -51,7 +48,6 @@ struct MessageOnlyFormat {
     /// Format requirements - no metadata needed / 格式化需求 - 不需要元数据
     using Requirements = StaticFormatRequirements<false, false, false, false, false>;
 
-#ifdef ONEPLOG_USE_FMT
     /**
      * @brief Format to buffer using fmt library (sync mode)
      * @brief 使用 fmt 库格式化到缓冲区（同步模式）
@@ -74,7 +70,6 @@ struct MessageOnlyFormat {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
 
     // =========================================================================
     // Non-fmt fallback implementations / 非 fmt 回退实现
@@ -112,7 +107,6 @@ struct SimpleFormat {
     /// Format requirements - needs timestamp and level / 格式化需求 - 需要时间戳和级别
     using Requirements = StaticFormatRequirements<true, true, false, false, false>;
 
-#ifdef ONEPLOG_USE_FMT
     /**
      * @brief Format to buffer using fmt library (sync mode)
      * @brief 使用 fmt 库格式化到缓冲区（同步模式）
@@ -154,7 +148,6 @@ struct SimpleFormat {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
 
     // =========================================================================
     // Non-fmt fallback implementations / 非 fmt 回退实现
@@ -217,7 +210,6 @@ struct FullFormat {
     /// Format requirements - needs all metadata / 格式化需求 - 需要所有元数据
     using Requirements = StaticFormatRequirements<true, true, true, true, false>;
 
-#ifdef ONEPLOG_USE_FMT
     /**
      * @brief Format to buffer using fmt library (sync mode)
      * @brief 使用 fmt 库格式化到缓冲区（同步模式）
@@ -267,7 +259,6 @@ struct FullFormat {
         std::string msg = entry.snapshot.FormatAll();
         buffer.append(std::string_view(msg));
     }
-#endif
 
     // =========================================================================
     // Non-fmt fallback implementations / 非 fmt 回退实现

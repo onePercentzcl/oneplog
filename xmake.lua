@@ -14,7 +14,6 @@ option("shared", {default = false, description = "Build shared library / 构建�
 option("headeronly", {default = false, description = "Header-only mode / 仅头文件模式"})
 option("tests", {default = false, description = "Build tests / 构建测试"})
 option("examples", {default = false, description = "Build examples / 构建示例"})
-option("use_fmt", {default = true, description = "Use fmt library / 使用 fmt 库"})
 
 -- ==============================================================================
 -- C++ Standard / C++ 标准
@@ -56,8 +55,8 @@ local oneplog_sources = {
     "src/oneplog/instantiations.cpp"
 }
 
--- fmt library sources (when use_fmt is enabled)
--- fmt 库源文件（启用 use_fmt 时）
+-- fmt library sources (bundled with oneplog)
+-- fmt 库源文件（内置于 oneplog）
 local fmt_sources = {
     "src/fmt/format.cc",
     "src/fmt/os.cc"
@@ -83,7 +82,9 @@ else
         end
         
         add_files(oneplog_sources)
+        add_files(fmt_sources)
         add_headerfiles("include/(oneplog/*.hpp)")
+        add_headerfiles("include/(fmt/*.h)")
         add_includedirs("include", {public = true})
         
         -- Platform-specific libraries / 平台特定库
@@ -91,13 +92,6 @@ else
             add_syslinks("pthread", "rt")
         elseif is_plat("macosx") then
             add_syslinks("pthread")
-        end
-        
-        -- Optional: fmt library (local) / 可选: fmt 库（本地）
-        if has_config("use_fmt") then
-            add_files(fmt_sources)
-            add_headerfiles("include/(fmt/*.h)")
-            add_defines("ONEPLOG_USE_FMT", {public = true})
         end
     target_end()
 end
@@ -218,7 +212,6 @@ if has_config("examples") then
         add_includedirs("include")
         -- Use header-only mode / 使用仅头文件模式
         add_defines("ONEPLOG_HEADER_ONLY")
-        add_defines("ONEPLOG_USE_FMT")
         -- Add fmt sources (still needed for fmt formatting)
         -- 添加 fmt 源文件（仍需要用于 fmt 格式化）
         add_files("src/fmt/format.cc")
