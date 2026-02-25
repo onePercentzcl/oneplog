@@ -5,6 +5,8 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [使用 xmake 包管理器安装](#使用-xmake-包管理器安装)
+- [使用 CMake FetchContent 安装](#使用-cmake-fetchcontent-安装)
 - [运行模式](#运行模式)
 - [编译期配置 (LoggerConfig)](#编译期配置-loggerconfig)
 - [运行时配置 (RuntimeConfig)](#运行时配置-runtimeconfig)
@@ -51,6 +53,94 @@ int main() {
     
     return 0;
 }
+```
+
+### 使用 xmake 包管理器安装
+
+1. 添加远程仓库：
+
+```bash
+xmake repo -a oneplog-repo https://github.com/onePercentzcl/xmake-repo.git
+```
+
+2. 在 `xmake.lua` 中添加依赖：
+
+```lua
+add_requires("oneplog")
+
+target("myapp")
+    set_kind("binary")
+    add_files("src/*.cpp")
+    add_packages("oneplog")
+```
+
+3. 可选配置：
+
+```lua
+-- 指定版本
+add_requires("oneplog v0.2.1")
+
+-- 使用共享库模式（默认为 header-only）
+add_requires("oneplog", {configs = {header_only = false}})
+
+-- 使用共享库
+add_requires("oneplog", {configs = {header_only = false, shared = true}})
+```
+
+### 使用 CMake FetchContent 安装
+
+1. 在 `CMakeLists.txt` 中添加：
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    oneplog
+    GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
+    GIT_TAG        v0.2.1
+)
+
+FetchContent_MakeAvailable(oneplog)
+
+target_link_libraries(myapp PRIVATE oneplog::oneplog)
+```
+
+2. 或者使用 URL 方式：
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    oneplog
+    URL https://github.com/onePercentzcl/oneplog/archive/refs/tags/v0.2.1.tar.gz
+)
+
+FetchContent_MakeAvailable(oneplog)
+
+target_link_libraries(myapp PRIVATE oneplog::oneplog)
+```
+
+3. 完整示例：
+
+```cmake
+cmake_minimum_required(VERSION 3.14)
+project(myapp)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(FetchContent)
+
+FetchContent_Declare(
+    oneplog
+    GIT_REPOSITORY https://github.com/onePercentzcl/oneplog.git
+    GIT_TAG        v0.2.1
+)
+
+FetchContent_MakeAvailable(oneplog)
+
+add_executable(myapp main.cpp)
+target_link_libraries(myapp PRIVATE oneplog::oneplog)
 ```
 
 ---
