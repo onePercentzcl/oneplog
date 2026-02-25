@@ -3,28 +3,39 @@
  * @brief Process and module name management for onePlog
  * @brief onePlog 的进程名和模块名管理
  *
- * Design principles / 设计原则：
+ * This file provides name management functionality for identifying log sources:
+ * - Process name: Global identifier for the application/process
+ * - Module name: Thread-local identifier for logical components
+ *
+ * 此文件提供用于标识日志来源的名称管理功能：
+ * - 进程名：应用程序/进程的全局标识符
+ * - 模块名：逻辑组件的线程局部标识符
+ *
+ * @section design Design Principles / 设计原则
  * - Process name and module name belong to process/thread, NOT to Logger
  * - 进程名和模块名属于进程/线程，而不是 Logger 对象
  *
- * Storage mechanisms for different modes / 不同模式的存储机制：
- * - Sync: Process name is global constant, module name is thread_local
- *         Sink can directly access both names
- *         进程名为全局常量，模块名为线程局部变量，Sink 可直接访问
+ * @section storage Storage Mechanisms / 存储机制
+ * - Sync: Process name is global constant, module name is thread_local.
+ *         Sink can directly access both names.
+ *         进程名为全局常量，模块名为线程局部变量，Sink 可直接访问。
  *
- * - Async: Process name is global constant, module name is thread_local
- *          BUT WriterThread cannot see thread_local, so need TID-to-name table on heap
- *          进程名为全局常量，模块名为线程局部变量
- *          但 WriterThread 看不到 thread_local，所以需要堆上的 TID-模块名对照表
+ * - Async: Process name is global constant, module name is thread_local.
+ *          BUT WriterThread cannot see thread_local, so need TID-to-name table on heap.
+ *          进程名为全局常量，模块名为线程局部变量。
+ *          但 WriterThread 看不到 thread_local，所以需要堆上的 TID-模块名对照表。
  *
- * - MProc: Process name is global constant, module name is thread_local
- *          Consumer process needs shared memory PID/TID-to-name table
- *          进程名为全局常量，模块名为线程局部变量
- *          消费者进程需要共享内存中的 PID/TID-名称对照表
+ * - MProc: Process name is global constant, module name is thread_local.
+ *          Consumer process needs shared memory PID/TID-to-name table.
+ *          进程名为全局常量，模块名为线程局部变量。
+ *          消费者进程需要共享内存中的 PID/TID-名称对照表。
  *
- * Platform-specific optimizations / 平台特定优化：
+ * @section platform Platform-specific Optimizations / 平台特定优化
  * - Linux: Uses DirectMappingTable with O(1) lookup using TID as array index
  * - Non-Linux (macOS/Windows): Uses ArrayMappingTable with O(n) linear search
+ *
+ * @see ThreadModuleTable for the TID-to-name mapping implementation
+ * @see NameManager for the unified interface
  *
  * @copyright Copyright (c) 2024 onePlog
  *

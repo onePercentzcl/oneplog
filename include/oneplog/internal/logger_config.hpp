@@ -3,11 +3,42 @@
  * @brief Compile-time configuration infrastructure for Logger
  * @brief Logger 的编译期配置基础设施
  *
- * This file provides the compile-time configuration structures for Logger:
+ * This file provides the compile-time configuration system that enables
+ * zero-overhead abstraction through template metaprogramming. Key components:
+ *
+ * 本文件提供通过模板元编程实现零开销抽象的编译期配置系统。主要组件：
+ *
  * - StaticFormatRequirements: Specifies metadata requirements for formatters
+ *   StaticFormatRequirements：指定格式化器的元数据需求
  * - SinkBinding: Binds a Sink type with a Format type
+ *   SinkBinding：将 Sink 类型与 Format 类型绑定
  * - SinkBindingList: Manages multiple SinkBindings with union of requirements
+ *   SinkBindingList：管理多个 SinkBinding 并计算需求并集
  * - LoggerConfig: Aggregates all compile-time configuration
+ *   LoggerConfig：聚合所有编译期配置
+ *
+ * Design Philosophy / 设计理念:
+ * - All configuration resolved at compile time for maximum performance
+ *   所有配置在编译期解析以获得最大性能
+ * - Metadata acquisition is conditional based on format requirements
+ *   元数据获取基于格式需求条件化
+ * - Multiple sinks can have independent formats
+ *   多个 Sink 可以有独立的格式
+ *
+ * Configuration Options / 配置选项:
+ * - Mode: Sync, Async, MProc operating modes
+ *   Mode：Sync、Async、MProc 运行模式
+ * - Level: Compile-time minimum log level filtering
+ *   Level：编译期最小日志级别过滤
+ * - EnableWFC: Wait-For-Completion support for critical logs
+ *   EnableWFC：关键日志的等待完成支持
+ * - EnableShadowTail: Producer-side tail caching optimization
+ *   EnableShadowTail：生产者侧尾指针缓存优化
+ * - QueueFullPolicy: Block, DropNewest, or DropOldest
+ *   QueueFullPolicy：阻塞、丢弃最新或丢弃最旧
+ *
+ * @see LoggerImpl for the main logger implementation
+ * @see static_formats.hpp for predefined format types
  *
  * @copyright Copyright (c) 2024 onePlog
  */

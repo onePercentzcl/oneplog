@@ -3,17 +3,40 @@
  * @brief PipelineThread for multi-process logging
  * @brief 多进程日志的管道线程
  *
- * PipelineThread is responsible for:
- * - Reading log entries from HeapRingBuffer
- * - Converting pointer data to inline data (for cross-process transfer)
- * - Adding process ID to log entries
- * - Writing converted entries to SharedRingBuffer
+ * PipelineThread bridges the gap between single-process async logging
+ * and multi-process shared memory logging. It runs as a dedicated thread
+ * in the producer process.
  *
- * PipelineThread 负责：
- * - 从 HeapRingBuffer 读取日志条目
- * - 将指针数据转换为内联数据（用于跨进程传输）
- * - 向日志条目添加进程 ID
- * - 将转换后的条目写入 SharedRingBuffer
+ * PipelineThread 桥接单进程异步日志和多进程共享内存日志之间的差距。
+ * 它作为生产者进程中的专用线程运行。
+ *
+ * Responsibilities / 职责:
+ * - Reading log entries from HeapRingBuffer (process-local)
+ *   从 HeapRingBuffer（进程本地）读取日志条目
+ * - Converting pointer data to inline data (for cross-process safety)
+ *   将指针数据转换为内联数据（用于跨进程安全）
+ * - Adding process ID to log entries
+ *   向日志条目添加进程 ID
+ * - Writing converted entries to SharedRingBuffer (shared memory)
+ *   将转换后的条目写入 SharedRingBuffer（共享内存）
+ *
+ * Data Flow / 数据流:
+ * ```
+ * Producer Thread → HeapRingBuffer → PipelineThread → SharedRingBuffer → Consumer Process
+ * 生产者线程 → HeapRingBuffer → PipelineThread → SharedRingBuffer → 消费者进程
+ * ```
+ *
+ * Thread Model / 线程模型:
+ * - Spin-wait with exponential backoff for low latency
+ *   自旋等待配合指数退避以实现低延迟
+ * - Falls back to notification-based wait after timeout
+ *   超时后回退到基于通知的等待
+ * - Graceful shutdown with queue draining
+ *   优雅关闭并排空队列
+ *
+ * @see HeapRingBuffer for the source ring buffer
+ * @see SharedRingBuffer for the destination ring buffer
+ * @see BinarySnapshot::ConvertPointersToData for pointer conversion
  *
  * @copyright Copyright (c) 2024 onePlog
  */

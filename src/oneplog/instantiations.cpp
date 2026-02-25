@@ -10,6 +10,31 @@
  * 此文件为最常用的 Logger 配置提供显式实例化，
  * 以减少使用静态或动态库时的编译时间。
  *
+ * Purpose / 目的:
+ * - Reduce compilation time by pre-compiling common template instantiations
+ *   通过预编译常用模板实例化来减少编译时间
+ * - Reduce binary size by sharing instantiations across translation units
+ *   通过跨翻译单元共享实例化来减少二进制大小
+ * - Provide ready-to-use configurations for typical use cases
+ *   为典型用例提供即用配置
+ *
+ * Included Configurations / 包含的配置:
+ * - Sync mode: Console and File sinks
+ *   同步模式：控制台和文件 Sink
+ * - Async mode: Console and File sinks
+ *   异步模式：控制台和文件 Sink
+ * - MProc mode: Console and File sinks
+ *   多进程模式：控制台和文件 Sink
+ * - High performance: NullSink for benchmarking
+ *   高性能：用于基准测试的 NullSink
+ *
+ * @note Users with custom configurations will still need to instantiate
+ *       their own templates, but common cases are covered here.
+ * @note 使用自定义配置的用户仍需实例化自己的模板，但常见情况已在此覆盖。
+ *
+ * @see LoggerConfig for configuration options
+ * @see LoggerImpl for the main logger implementation
+ *
  * @copyright Copyright (c) 2024 onePlog
  */
 

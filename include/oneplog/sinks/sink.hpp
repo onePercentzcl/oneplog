@@ -3,11 +3,42 @@
  * @brief Log output sinks for onePlog
  * @brief onePlog 日志输出目标
  *
- * This file contains all sink implementations:
- * - Sink: Base class for all sinks
- * - ConsoleSink: Console output sink
+ * This file contains all sink implementations for writing log messages
+ * to various destinations:
+ * - Sink: Abstract base class defining the sink interface
+ * - ConsoleSink: Console output sink (stdout/stderr) with color support
  * - FileSink: File output sink with rotation support
- * - NetworkSink: Network output sink (TCP/UDP)
+ * - NetworkSink: Network output sink (TCP/UDP) for remote logging
+ *
+ * 此文件包含用于将日志消息写入各种目标的所有 sink 实现：
+ * - Sink：定义 sink 接口的抽象基类
+ * - ConsoleSink：控制台输出 sink（stdout/stderr），支持颜色
+ * - FileSink：文件输出 sink，支持轮转
+ * - NetworkSink：网络输出 sink（TCP/UDP），用于远程日志
+ *
+ * @section thread_safety Thread Safety / 线程安全
+ * All sink implementations are thread-safe and can be used from multiple
+ * threads simultaneously. Internal synchronization is handled via mutexes.
+ * 所有 sink 实现都是线程安全的，可以从多个线程同时使用。
+ * 内部同步通过互斥锁处理。
+ *
+ * @section usage Usage Example / 使用示例
+ * @code
+ * // Console sink
+ * ConsoleSink console(ConsoleSink::Stream::StdOut);
+ * console.Write("Hello, world!");
+ * 
+ * // File sink with rotation
+ * FileSink file("app.log");
+ * file.SetMaxSize(10 * 1024 * 1024);  // 10MB
+ * file.SetMaxFiles(5);
+ * file.Write("Log message");
+ * @endcode
+ *
+ * @note For high-performance logging, consider using the static sink types
+ *       in static_formats.hpp (ConsoleSinkType, FileSinkType, NullSinkType).
+ * @note 对于高性能日志，考虑使用 static_formats.hpp 中的静态 sink 类型
+ *       （ConsoleSinkType、FileSinkType、NullSinkType）。
  *
  * @copyright Copyright (c) 2024 onePlog
  */
@@ -42,37 +73,102 @@ class Format;
  * @brief 日志输出目标基类
  *
  * Sink is responsible for writing formatted log messages to various destinations.
+ * All derived classes must implement the pure virtual methods: Write, Flush, Close.
+ *
  * Sink 负责将格式化后的日志消息写入各种目标。
+ * 所有派生类必须实现纯虚方法：Write、Flush、Close。
+ *
+ * @note This is an abstract base class. Use ConsoleSink, FileSink, or NetworkSink
+ *       for concrete implementations.
+ * @note 这是一个抽象基类。使用 ConsoleSink、FileSink 或 NetworkSink 获取具体实现。
  */
 class Sink {
 public:
+    /**
+     * @brief Virtual destructor for proper cleanup
+     * @brief 用于正确清理的虚析构函数
+     */
     virtual ~Sink() = default;
 
+    /**
+     * @brief Set the format for this sink
+     * @brief 设置此 sink 的格式
+     * @param format Shared pointer to the format object / 格式对象的共享指针
+     */
     void SetFormat(std::shared_ptr<Format> format) {
         m_format = std::move(format);
     }
 
+    /**
+     * @brief Get the current format
+     * @brief 获取当前格式
+     * @return Shared pointer to the format object / 格式对象的共享指针
+     */
     std::shared_ptr<Format> GetFormat() const {
         return m_format;
     }
 
+    /**
+     * @brief Write a log message (string version)
+     * @brief 写入日志消息（字符串版本）
+     * @param message The formatted log message to write / 要写入的格式化日志消息
+     */
     virtual void Write(const std::string& message) = 0;
 
+    /**
+     * @brief Write a log message (string_view version)
+     * @brief 写入日志消息（string_view 版本）
+     * @param message The formatted log message to write / 要写入的格式化日志消息
+     * @note Default implementation converts to string. Override for better performance.
+     * @note 默认实现转换为字符串。重写以获得更好的性能。
+     */
     virtual void Write(std::string_view message) {
         Write(std::string(message));
     }
 
+    /**
+     * @brief Write multiple log messages in batch
+     * @brief 批量写入多条日志消息
+     * @param messages Vector of formatted log messages / 格式化日志消息的向量
+     * @note Default implementation writes messages one by one. Override for batch optimization.
+     * @note 默认实现逐条写入消息。重写以进行批量优化。
+     */
     virtual void WriteBatch(const std::vector<std::string>& messages) {
         for (const auto& msg : messages) {
             Write(msg);
         }
     }
 
+    /**
+     * @brief Flush any buffered output
+     * @brief 刷新任何缓冲的输出
+     */
     virtual void Flush() = 0;
+
+    /**
+     * @brief Close the sink and release resources
+     * @brief 关闭 sink 并释放资源
+     */
     virtual void Close() = 0;
+
+    /**
+     * @brief Check if the sink has encountered an error
+     * @brief 检查 sink 是否遇到错误
+     * @return true if an error has occurred / 如果发生错误则返回 true
+     */
     virtual bool HasError() const = 0;
+
+    /**
+     * @brief Get the last error message
+     * @brief 获取最后的错误消息
+     * @return Error message string / 错误消息字符串
+     */
     virtual std::string GetLastError() const = 0;
 
+    /**
+     * @brief Start the background thread for async operations
+     * @brief 启动用于异步操作的后台线程
+     */
     void StartThread() {
         if (m_threadRunning.load()) {
             return;
@@ -81,6 +177,10 @@ public:
         m_thread = std::thread(&Sink::ThreadFunc, this);
     }
 
+    /**
+     * @brief Stop the background thread
+     * @brief 停止后台线程
+     */
     void StopThread() {
         if (!m_threadRunning.load()) {
             return;
@@ -91,16 +191,25 @@ public:
         }
     }
 
+    /**
+     * @brief Check if the background thread is running
+     * @brief 检查后台线程是否正在运行
+     * @return true if thread is running / 如果线程正在运行则返回 true
+     */
     bool IsThreadRunning() const {
         return m_threadRunning.load();
     }
 
 protected:
+    /**
+     * @brief Background thread function (override in derived classes)
+     * @brief 后台线程函数（在派生类中重写）
+     */
     virtual void ThreadFunc() {}
 
-    std::shared_ptr<Format> m_format;
-    std::thread m_thread;
-    std::atomic<bool> m_threadRunning{false};
+    std::shared_ptr<Format> m_format;           ///< Format for this sink / 此 sink 的格式
+    std::thread m_thread;                        ///< Background thread / 后台线程
+    std::atomic<bool> m_threadRunning{false};   ///< Thread running flag / 线程运行标志
 };
 
 // ==============================================================================

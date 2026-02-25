@@ -266,14 +266,43 @@ cmake -B build -DONEPLOG_HEADER_ONLY=OFF -DONEPLOG_BUILD_SHARED=ON
 
 在 Apple M4 Pro (14 核) macOS 上的测试结果：
 
-### Logger 与 spdlog 性能对比
+### 同步模式 vs spdlog
 
-| 测试项 | onePlog Logger | spdlog | 对比 |
-|--------|----------------|--------|------|
-| 同步模式（Null Sink） | 1660 万 ops/sec | 1652 万 ops/sec | +0.5% |
-| 同步模式（File Sink） | 879 万 ops/sec | 860 万 ops/sec | +2% |
-| 异步模式（Null Sink） | 1797 万 ops/sec | 469 万 ops/sec | +283% |
-| 异步模式（File Sink） | 1619 万 ops/sec | 480 万 ops/sec | +237% |
+| 测试项 | onePlog | spdlog | 对比 |
+|--------|---------|--------|------|
+| NullSink | 254.9 万 ops/sec | 254.5 万 ops/sec | 1.00x |
+| FileSink | 253.0 万 ops/sec | 231.6 万 ops/sec | **1.09x** |
+
+### 异步模式 vs spdlog
+
+| 测试项 | onePlog | spdlog | 对比 |
+|--------|---------|--------|------|
+| NullSink (单线程) | 568.4 万 ops/sec | 164.5 万 ops/sec | **3.45x** |
+| NullSink (4线程) | 435.9 万 ops/sec | 231.9 万 ops/sec | **1.88x** |
+| FileSink (单线程) | 438.2 万 ops/sec | 190.0 万 ops/sec | **2.31x** |
+
+### 延迟对比 (P50)
+
+| 测试项 | onePlog | spdlog | 对比 |
+|--------|---------|--------|------|
+| 同步 NullSink | 375 ns | 375 ns | 1.00x |
+| 同步 FileSink | 334 ns | 375 ns | **1.12x** |
+| 异步 NullSink (单线程) | 42 ns | 417 ns | **9.93x** |
+| 异步 NullSink (4线程) | 459 ns | 708 ns | **1.54x** |
+
+### QueueFullPolicy 性能
+
+| 策略 | 吞吐量 |
+|------|--------|
+| Block | 669.9 万 ops/sec |
+| DropNewest | 2320.7 万 ops/sec |
+| DropOldest | 跳过（已知问题） |
+
+**测试环境**：
+- 测试消息：`"Message {} value {}"` (2个参数)
+- 迭代次数：100,000
+- 预热次数：10,000
+- 两者均使用 `MessageOnlyFormat` / `%v` 模式
 
 **关键优化**：
 - 编译期配置：通过模板参数在编译时确定所有配置
@@ -283,12 +312,17 @@ cmake -B build -DONEPLOG_HEADER_ONLY=OFF -DONEPLOG_BUILD_SHARED=ON
 
 运行性能测试：
 ```bash
-# 编译
-clang++ -std=c++17 -O3 -I include \
-    -o benchmark_compare example/benchmark_compare.cpp -lpthread
+# 构建
+cd benchmarks
+mkdir build && cd build
+cmake ..
+make
 
-# 运行
-./benchmark_compare
+# 运行同步模式测试
+./benchmark_sync
+
+# 运行异步模式测试
+./benchmark_async
 ```
 
 ## 许可证

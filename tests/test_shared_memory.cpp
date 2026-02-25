@@ -7,6 +7,10 @@
  */
 
 #include <gtest/gtest.h>
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+#endif
 
 #include <atomic>
 #include <cstring>
@@ -376,6 +380,121 @@ TEST_F(SharedMemoryTest, ConcurrentRingBufferAccess) {
     EXPECT_EQ(producedCount.load(), kItemCount);
     EXPECT_EQ(consumedCount.load(), kItemCount);
 }
+
+// ==============================================================================
+// Property-Based Tests / 属性测试
+// ==============================================================================
+
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+
+// Note: To run with 1000+ iterations, set RC_PARAMS="max_success=1000" environment variable
+// 注意：要运行 1000+ 次迭代，设置 RC_PARAMS="max_success=1000" 环境变量
+
+/**
+ * @brief Property 8: SharedMemory create and attach consistency
+ * @brief 属性 8：SharedMemory 创建附加一致性
+ *
+ * For any SharedMemory created with name N, Connect(N) should successfully
+ * attach to the same shared memory region and see the same data.
+ *
+ * 对于任意使用名称 N 创建的 SharedMemory，Connect(N) 应成功附加到
+ * 相同的共享内存区域并看到相同的数据。
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 8: SharedMemory 创建附加一致性**
+ * **Validates: Requirements 5.10**
+ */
+RC_GTEST_PROP(SharedMemoryPropertyTest, CreateAttachConsistency, ()) {
+    // Clean up any leftover shared memory / 清理任何残留的共享内存
+    shm_unlink("/test_prop_shm");
+    
+    // Generate random capacity / 生成随机容量
+    auto capacity = *rc::gen::inRange<size_t>(4, 64);
+    
+    // Create shared memory / 创建共享内存
+    auto owner = SharedMemory::Create("/test_prop_shm", capacity);
+    RC_ASSERT(owner != nullptr);
+    RC_ASSERT(owner->IsOwner());
+    
+    // Connect to shared memory / 连接到共享内存
+    auto client = SharedMemory::Connect("/test_prop_shm");
+    RC_ASSERT(client != nullptr);
+    RC_ASSERT(!client->IsOwner());
+    
+    // Both should see the same ring buffer capacity / 两者应看到相同的环形缓冲区容量
+    RC_ASSERT(owner->GetRingBuffer()->Capacity() == client->GetRingBuffer()->Capacity());
+    
+    // Clean up / 清理
+    owner.reset();
+    client.reset();
+    shm_unlink("/test_prop_shm");
+}
+
+/**
+ * @brief Property: Config changes are visible across connections
+ * @brief 属性：配置更改在连接间可见
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 8: SharedMemory 创建附加一致性**
+ * **Validates: Requirements 5.10**
+ */
+RC_GTEST_PROP(SharedMemoryPropertyTest, ConfigVisibility, ()) {
+    shm_unlink("/test_prop_config");
+    
+    auto owner = SharedMemory::Create("/test_prop_config", 16);
+    RC_ASSERT(owner != nullptr);
+    
+    auto client = SharedMemory::Connect("/test_prop_config");
+    RC_ASSERT(client != nullptr);
+    
+    // Generate random level / 生成随机级别
+    auto levelInt = *rc::gen::inRange(0, 6);
+    Level level = static_cast<Level>(levelInt);
+    
+    // Owner sets level / 所有者设置级别
+    owner->GetConfig()->SetLevel(level);
+    
+    // Client should see the change / 客户端应看到更改
+    RC_ASSERT(client->GetConfig()->GetLevel() == level);
+    
+    owner.reset();
+    client.reset();
+    shm_unlink("/test_prop_config");
+}
+
+/**
+ * @brief Property: Name registration is visible across connections
+ * @brief 属性：名称注册在连接间可见
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 8: SharedMemory 创建附加一致性**
+ * **Validates: Requirements 5.10**
+ */
+RC_GTEST_PROP(SharedMemoryPropertyTest, NameRegistrationVisibility, ()) {
+    shm_unlink("/test_prop_names");
+    
+    auto owner = SharedMemory::Create("/test_prop_names", 16);
+    RC_ASSERT(owner != nullptr);
+    
+    auto client = SharedMemory::Connect("/test_prop_names");
+    RC_ASSERT(client != nullptr);
+    
+    // Generate random process name (limited length) / 生成随机进程名（限制长度）
+    auto nameLen = *rc::gen::inRange<size_t>(1, 20);
+    std::string name(nameLen, 'p');
+    
+    // Owner registers process / 所有者注册进程
+    uint32_t id = owner->RegisterProcess(name);
+    RC_ASSERT(id > 0);
+    
+    // Client should see the registration / 客户端应看到注册
+    const char* retrievedName = client->GetProcessName(id);
+    RC_ASSERT(retrievedName != nullptr);
+    RC_ASSERT(std::string(retrievedName) == name);
+    
+    owner.reset();
+    client.reset();
+    shm_unlink("/test_prop_names");
+}
+
+#endif  // ONEPLOG_HAS_RAPIDCHECK
 
 }  // namespace test
 }  // namespace oneplog

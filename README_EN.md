@@ -540,37 +540,63 @@ xmake run benchmark
 
 Test results on Apple M4 Pro (14 cores) macOS:
 
-### Component Performance
-
-| Test | Throughput | Avg Latency | P99 Latency |
-|------|------------|-------------|-------------|
-| BinarySnapshot Capture | 34.8M ops/sec | 15 ns | 42 ns |
-| HeapRingBuffer Push/Pop | 26.6M ops/sec | 25 ns | 125 ns |
-| Format | 2.77M ops/sec | 336 ns | 459 ns |
-
-### Comparison with spdlog
-
-Fair comparison using the same output format (message only). Results are average ± standard deviation over 100 runs:
+### Sync Mode vs spdlog
 
 | Test | onePlog | spdlog | Comparison |
 |------|---------|--------|------------|
-| Sync Mode (Null Sink) | 15.1M ± 1.0M ops/sec | 15.1M ± 0.6M ops/sec | +0.2% |
-| Async Mode (1 Thread) | 19.4M ± 1.6M ops/sec | 4.8M ± 0.4M ops/sec | +300% |
-| Async Mode (4 Threads) | 8.8M ± 0.6M ops/sec | 3.2M ± 0.04M ops/sec | +180% |
-| Sync File Output | 10.1M ± 0.1M ops/sec | 8.8M ± 0.2M ops/sec | +15% |
-| Async File Output | 19.5M ± 0.2M ops/sec | 5.0M ± 0.1M ops/sec | +290% |
-| Async File (4 Threads) | 9.3M ± 0.5M ops/sec | 3.4M ± 0.03M ops/sec | +172% |
+| NullSink | 2.55M ops/sec | 2.55M ops/sec | 1.00x |
+| FileSink | 2.53M ops/sec | 2.32M ops/sec | **1.09x** |
+
+### Async Mode vs spdlog
+
+| Test | onePlog | spdlog | Comparison |
+|------|---------|--------|------------|
+| NullSink (1 thread) | 5.68M ops/sec | 1.65M ops/sec | **3.45x** |
+| NullSink (4 threads) | 4.36M ops/sec | 2.32M ops/sec | **1.88x** |
+| FileSink (1 thread) | 4.38M ops/sec | 1.90M ops/sec | **2.31x** |
+
+### Latency Comparison (P50)
+
+| Test | onePlog | spdlog | Comparison |
+|------|---------|--------|------------|
+| Sync NullSink | 375 ns | 375 ns | 1.00x |
+| Sync FileSink | 334 ns | 375 ns | **1.12x** |
+| Async NullSink (1 thread) | 42 ns | 417 ns | **9.93x** |
+| Async NullSink (4 threads) | 459 ns | 708 ns | **1.54x** |
+
+### QueueFullPolicy Performance
+
+| Policy | Throughput |
+|--------|------------|
+| Block | 6.70M ops/sec |
+| DropNewest | 23.21M ops/sec |
+| DropOldest | Skipped (known issue) |
+
+**Test Environment**:
+- Test message: `"Message {} value {}"` (2 arguments)
+- Iterations: 100,000
+- Warmup: 10,000
+- Both use `MessageOnlyFormat` / `%v` pattern
 
 **Key Optimizations**:
-- Sync mode uses `fmt::memory_buffer` stack buffer for zero heap allocation
-- Async mode uses lock-free ring buffer for excellent high-concurrency performance
-- Formatters fetch metadata (thread ID, process ID, etc.) on demand
+- Compile-time configuration via template parameters
+- SinkBindingList: Multi-sink binding with compile-time metadata calculation
+- Conditional notification: `NotifyConsumerIfWaiting()` only notifies when consumer is waiting
+- On-demand metadata: Fetch TID/PID only when required by Format
 
 Run performance benchmark:
 ```bash
-xmake f -m release
-xmake -r benchmark_compare
-./build/macosx/arm64/release/benchmark_compare -i 500000 -r 5
+# Build
+cd benchmarks
+mkdir build && cd build
+cmake ..
+make
+
+# Run sync mode benchmark
+./benchmark_sync
+
+# Run async mode benchmark
+./benchmark_async
 ```
 
 ### WFC Compile-Time Overhead Test

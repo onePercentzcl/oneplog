@@ -3,6 +3,32 @@
  * @brief Log entry structures for onePlog
  * @brief onePlog 日志条目结构
  *
+ * This file defines the log entry data structures that are stored in
+ * ring buffers for async/MProc modes. Key features:
+ *
+ * 本文件定义存储在环形队列中用于 async/MProc 模式的日志条目数据结构。
+ * 主要特性：
+ *
+ * - LogEntryDebug: Full entry with source location (file, line, function)
+ *   LogEntryDebug：包含源位置的完整条目（文件、行号、函数）
+ * - LogEntryRelease: Compact entry without source location
+ *   LogEntryRelease：不含源位置的精简条目
+ * - Compile-time selection based on NDEBUG macro
+ *   基于 NDEBUG 宏的编译期选择
+ * - BinarySnapshot integration for argument storage
+ *   BinarySnapshot 集成用于参数存储
+ *
+ * Memory Layout Optimization / 内存布局优化:
+ * - Fields ordered to minimize padding
+ *   字段排序以最小化填充
+ * - Debug entry: 296 bytes (with source location)
+ *   调试条目：296 字节（含源位置）
+ * - Release entry: 280 bytes (compact)
+ *   发布条目：280 字节（精简）
+ *
+ * @see BinarySnapshot for argument capture details
+ * @see HeapRingBuffer for storage mechanism
+ *
  * @copyright Copyright (c) 2024 onePlog
  */
 

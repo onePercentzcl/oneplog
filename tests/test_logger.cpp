@@ -15,10 +15,15 @@
  */
 
 #include <gtest/gtest.h>
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+#endif
 #include <thread>
 #include <chrono>
 #include <vector>
 #include <string>
+#include <set>
 
 #include "oneplog/logger.hpp"
 
@@ -661,16 +666,16 @@ TEST(FastLoggerV2MProcTest, MProcModeAccessors) {
         uint32_t processId = logger.RegisterProcess("TestProcess");
         EXPECT_GT(processId, 0u);
         
-        uint32_t threadId = logger.RegisterThread("TestThread");
-        EXPECT_GT(threadId, 0u);
+        uint32_t moduleId = logger.RegisterModule("TestModule");
+        EXPECT_GT(moduleId, 0u);
         
         const char* processName = logger.GetProcessName(processId);
         EXPECT_NE(processName, nullptr);
         EXPECT_STREQ(processName, "TestProcess");
         
-        const char* threadName = logger.GetThreadName(threadId);
-        EXPECT_NE(threadName, nullptr);
-        EXPECT_STREQ(threadName, "TestThread");
+        const char* moduleName = logger.GetModuleName(moduleId);
+        EXPECT_NE(moduleName, nullptr);
+        EXPECT_STREQ(moduleName, "TestModule");
     }
 }
 
@@ -1606,6 +1611,132 @@ TEST(FastLoggerV2FormatSwitchTest, CompileTimeUseFmtConstant) {
     using NoFmtLogger = FastLoggerV2<TestNoFmtSyncConfig>;
     EXPECT_FALSE(NoFmtLogger::kUseFmt);
 }
+
+// ==============================================================================
+// Property-Based Tests / 属性测试
+// ==============================================================================
+
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+
+// Note: To run with 1000+ iterations, set RC_PARAMS="max_success=1000" environment variable
+// 注意：要运行 1000+ 次迭代，设置 RC_PARAMS="max_success=1000" 环境变量
+
+/**
+ * @brief Property 5: LoggerImpl log output correctness
+ * @brief 属性 5：LoggerImpl 日志输出正确性
+ *
+ * For any log message with format string and arguments, the logger should
+ * correctly format and output the message without data loss or corruption.
+ *
+ * 对于任意带有格式字符串和参数的日志消息，日志器应正确格式化并输出消息，
+ * 不会丢失或损坏数据。
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 5: LoggerImpl 日志输出正确性**
+ * **Validates: Requirements 5.7**
+ */
+RC_GTEST_PROP(LoggerImplPropertyTest, LogOutputCorrectness, ()) {
+    FastLoggerV2<TestSyncConfig> logger;
+    
+    // Generate random integer value / 生成随机整数值
+    auto intValue = *rc::gen::arbitrary<int>();
+    
+    // Log the value / 记录值
+    logger.Info("value: {}", intValue);
+    
+    auto& sink = logger.GetSinkBindings().Get<0>().sink;
+    RC_ASSERT(sink.messages.size() == 1u);
+    
+    // Verify the message contains the correct value / 验证消息包含正确的值
+    std::string expected = "value: " + std::to_string(intValue);
+    RC_ASSERT(sink.messages[0] == expected);
+}
+
+/**
+ * @brief Property: Async mode delivers all messages after flush
+ * @brief 属性：异步模式在刷新后传递所有消息
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 5: LoggerImpl 日志输出正确性**
+ * **Validates: Requirements 5.7**
+ */
+RC_GTEST_PROP(LoggerImplPropertyTest, AsyncModeMessageDelivery, ()) {
+    FastLoggerV2<TestAsyncConfig> logger;
+    
+    // Generate random number of messages (small range for reliability)
+    // 生成随机数量的消息（小范围以提高可靠性）
+    auto messageCount = *rc::gen::inRange(1, 10);
+    
+    // Log messages / 记录消息
+    for (int i = 0; i < messageCount; ++i) {
+        logger.Info("async msg {}", i);
+    }
+    
+    // Flush and wait to ensure all messages are processed
+    // 刷新并等待以确保所有消息被处理
+    logger.Flush();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    
+    auto& sink = logger.GetSinkBindings().Get<0>().sink;
+    
+    // All messages should be delivered / 所有消息应被传递
+    RC_ASSERT(sink.messages.size() >= static_cast<size_t>(messageCount));
+}
+
+/**
+ * @brief Property: Level filtering works correctly
+ * @brief 属性：级别过滤正确工作
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 5: LoggerImpl 日志输出正确性**
+ * **Validates: Requirements 5.7**
+ */
+RC_GTEST_PROP(LoggerImplPropertyTest, LevelFilteringCorrectness, ()) {
+    // TestLevelFilterConfig has Level::Info as minimum
+    FastLoggerV2<TestLevelFilterConfig> logger;
+    
+    // Log at all levels / 在所有级别记录
+    logger.Trace("trace");
+    logger.Debug("debug");
+    logger.Info("info");
+    logger.Warn("warn");
+    logger.Error("error");
+    logger.Critical("critical");
+    
+    auto& sink = logger.GetSinkBindings().Get<0>().sink;
+    
+    // Only Info and above should be logged (4 messages)
+    // 只有 Info 及以上级别应被记录（4 条消息）
+    RC_ASSERT(sink.messages.size() == 4u);
+    RC_ASSERT(sink.messages[0] == "info");
+    RC_ASSERT(sink.messages[1] == "warn");
+    RC_ASSERT(sink.messages[2] == "error");
+    RC_ASSERT(sink.messages[3] == "critical");
+}
+
+/**
+ * @brief Property: Multiple argument types are correctly formatted
+ * @brief 属性：多种参数类型被正确格式化
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 5: LoggerImpl 日志输出正确性**
+ * **Validates: Requirements 5.7**
+ */
+RC_GTEST_PROP(LoggerImplPropertyTest, MultipleArgumentTypes, ()) {
+    FastLoggerV2<TestSyncConfig> logger;
+    
+    // Generate random values of different types / 生成不同类型的随机值
+    auto intVal = *rc::gen::arbitrary<int>();
+    auto boolVal = *rc::gen::arbitrary<bool>();
+    
+    // Log with multiple arguments / 使用多个参数记录
+    logger.Info("{} {}", intVal, boolVal);
+    
+    auto& sink = logger.GetSinkBindings().Get<0>().sink;
+    RC_ASSERT(sink.messages.size() == 1u);
+    
+    // Verify the message contains both values / 验证消息包含两个值
+    std::string expected = std::to_string(intVal) + " " + (boolVal ? "true" : "false");
+    RC_ASSERT(sink.messages[0] == expected);
+}
+
+#endif  // ONEPLOG_HAS_RAPIDCHECK
 
 }  // namespace
 }  // namespace oneplog

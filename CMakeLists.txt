@@ -15,8 +15,6 @@ project(oneplog
 # ==============================================================================
 option(ONEPLOG_BUILD_SHARED "Build shared library / 构建动态库" OFF)
 option(ONEPLOG_HEADER_ONLY "Header-only mode (no library) / 仅头文件模式" ON)
-option(ONEPLOG_BUILD_TESTS "Build tests / 构建测试" OFF)
-option(ONEPLOG_BUILD_EXAMPLES "Build examples / 构建示例" OFF)
 
 # ==============================================================================
 # C++ Standard / C++ 标准
@@ -64,8 +62,6 @@ set(ONEPLOG_HEADERS
     include/oneplog/internal/shared_ring_buffer.hpp
     include/oneplog/internal/static_formats.hpp
     include/oneplog/sinks/sink.hpp
-    include/oneplog/benchmark/latency_collector.hpp
-    include/oneplog/benchmark/performance_benchmark.hpp
 )
 
 # ==============================================================================
@@ -116,21 +112,6 @@ else()
     elseif(UNIX AND APPLE)
         target_link_libraries(oneplog PUBLIC pthread)
     endif()
-endif()
-
-# ==============================================================================
-# Tests / 测试
-# ==============================================================================
-if(ONEPLOG_BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
-
-# ==============================================================================
-# Examples / 示例
-# ==============================================================================
-if(ONEPLOG_BUILD_EXAMPLES)
-    add_subdirectory(example)
 endif()
 
 # ==============================================================================

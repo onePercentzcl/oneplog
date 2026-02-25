@@ -7,6 +7,10 @@
  */
 
 #include <gtest/gtest.h>
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+#endif
 
 #include <atomic>
 #include <cstring>
@@ -511,6 +515,133 @@ TEST(SharedRingBufferTest, DroppedCountTracking) {
     
     delete buffer;
 }
+
+// ==============================================================================
+// Property-Based Tests / 属性测试
+// ==============================================================================
+
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+
+// Note: To run with 1000+ iterations, set RC_PARAMS="max_success=1000" environment variable
+// 注意：要运行 1000+ 次迭代，设置 RC_PARAMS="max_success=1000" 环境变量
+
+/**
+ * @brief Property 2: SharedRingBuffer FIFO order guarantee
+ * @brief 属性 2：SharedRingBuffer FIFO 顺序保证
+ *
+ * For any sequence of enqueued elements [e1, e2, ..., eN], the dequeue order
+ * should maintain FIFO order, i.e., elements enqueued first are dequeued first.
+ *
+ * 对于任意入队元素序列 [e1, e2, ..., eN]，出队顺序应该保持 FIFO 顺序，
+ * 即先入队的元素先出队。
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 2: SharedRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.3**
+ */
+RC_GTEST_PROP(SharedRingBufferPropertyTest, FIFOOrderGuarantee, ()) {
+    // Generate random capacity (power of 2 for efficiency)
+    // 生成随机容量（2 的幂以提高效率）
+    auto capacityExp = *rc::gen::inRange(2, 6);  // 4 to 32
+    size_t capacity = 1 << capacityExp;
+    
+    size_t memSize = SharedRingBuffer<int>::CalculateRequiredSize(capacity);
+    TestMemory mem(memSize);
+    
+    auto* buffer = SharedRingBuffer<int>::Create(mem.Get(), mem.Size(), capacity);
+    RC_ASSERT(buffer != nullptr);
+    
+    // Generate random number of items to push (up to capacity)
+    // 生成随机数量的元素（最多到容量）
+    auto itemCount = *rc::gen::inRange(0, static_cast<int>(capacity));
+    
+    // Push items / 推入元素
+    std::vector<int> pushed;
+    for (int i = 0; i < itemCount; ++i) {
+        auto value = *rc::gen::arbitrary<int>();
+        if (buffer->TryPush(value)) {
+            pushed.push_back(value);
+        }
+    }
+    
+    // Pop items and verify FIFO order / 弹出元素并验证 FIFO 顺序
+    std::vector<int> popped;
+    int value;
+    while (buffer->TryPop(value)) {
+        popped.push_back(value);
+    }
+    
+    // Verify FIFO order / 验证 FIFO 顺序
+    RC_ASSERT(pushed == popped);
+    
+    delete buffer;
+}
+
+/**
+ * @brief Property: Size is always consistent
+ * @brief 属性：大小始终一致
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 2: SharedRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.3**
+ */
+RC_GTEST_PROP(SharedRingBufferPropertyTest, SizeConsistency, ()) {
+    auto capacity = *rc::gen::inRange(4, 32);
+    size_t memSize = SharedRingBuffer<int>::CalculateRequiredSize(static_cast<size_t>(capacity));
+    TestMemory mem(memSize);
+    
+    auto* buffer = SharedRingBuffer<int>::Create(mem.Get(), mem.Size(), static_cast<size_t>(capacity));
+    RC_ASSERT(buffer != nullptr);
+    
+    auto pushCount = *rc::gen::inRange(0, capacity);
+    auto popCount = *rc::gen::inRange(0, pushCount);
+    
+    // Push items / 推入元素
+    for (int i = 0; i < pushCount; ++i) {
+        buffer->TryPush(i);
+    }
+    RC_ASSERT(buffer->Size() == static_cast<size_t>(pushCount));
+    
+    // Pop items / 弹出元素
+    int value;
+    for (int i = 0; i < popCount; ++i) {
+        buffer->TryPop(value);
+    }
+    RC_ASSERT(buffer->Size() == static_cast<size_t>(pushCount - popCount));
+    
+    delete buffer;
+}
+
+/**
+ * @brief Property: Never exceeds capacity
+ * @brief 属性：永远不超过容量
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 2: SharedRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.3**
+ */
+RC_GTEST_PROP(SharedRingBufferPropertyTest, NeverExceedsCapacity, ()) {
+    auto capacity = *rc::gen::inRange(4, 32);
+    size_t memSize = SharedRingBuffer<int>::CalculateRequiredSize(static_cast<size_t>(capacity));
+    TestMemory mem(memSize);
+    
+    auto* buffer = SharedRingBuffer<int>::Create(mem.Get(), mem.Size(), static_cast<size_t>(capacity));
+    RC_ASSERT(buffer != nullptr);
+    
+    // Try to push more than capacity / 尝试推入超过容量的元素
+    int successCount = 0;
+    for (int i = 0; i < capacity * 2; ++i) {
+        if (buffer->TryPush(i)) {
+            ++successCount;
+        }
+    }
+    
+    // Should only succeed up to capacity / 应该只成功到容量
+    RC_ASSERT(successCount == capacity);
+    RC_ASSERT(buffer->Size() == static_cast<size_t>(capacity));
+    RC_ASSERT(buffer->IsFull());
+    
+    delete buffer;
+}
+
+#endif  // ONEPLOG_HAS_RAPIDCHECK
 
 }  // namespace test
 }  // namespace oneplog

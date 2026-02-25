@@ -5,13 +5,13 @@ build_test/
 cmake-build-*/
 out/
 
-# XMake
+# XMake / XMake 构建系统
 .xmake/
 
-# Kiro
+# Kiro / Kiro IDE
 .kiro/
 
-# IDE
+# IDE / 集成开发环境
 .idea/
 .vscode/
 *.swp
@@ -31,7 +31,63 @@ out/
 # OS files / 系统文件
 .DS_Store
 Thumbs.db
+Desktop.ini
+._*
 
 # Test output / 测试输出
 Testing/
 *.log
+
+# Package directories / 包目录
+packages/
+xmake-repo-package/
+
+# Temporary files / 临时文件
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Documentation build / 文档构建
+docs/_build/
+html/
+latex/
+
+# External libraries - unnecessary files / 外部库 - 不必要的文件
+# GitHub workflows and CI
+external/*/.github/
+external/*/.travis.yml
+external/*/appveyor.yml
+
+# Documentation and examples (use official docs instead)
+external/*/doc/
+external/*/docs/
+external/*/examples/
+external/*/example/
+external/*/bench/
+external/*/logos/
+external/*/scripts/
+
+# Tests (we have our own tests)
+external/*/test/
+external/*/tests/
+
+# Bazel build files
+external/*/*.bazel
+external/*/*.bzl
+external/*/WORKSPACE
+
+# Editor and tool configs
+external/*/.clang-format
+external/*/.clang-tidy
+external/*/.dir-locals.el
+external/*/.git-blame-ignore-revs
+external/*/.gitattributes
+external/*/.gitmodules
+
+# CI configs
+external/*/ci/
+
+# Contribution guides
+external/*/CONTRIBUTING.md
+external/*/CONTRIBUTORS

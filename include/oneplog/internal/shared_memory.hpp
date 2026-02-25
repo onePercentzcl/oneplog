@@ -3,13 +3,41 @@
  * @brief SharedMemory manager for multi-process logging
  * @brief 多进程日志的共享内存管理器
  *
- * This file contains:
- * - SharedRingBuffer: Ring buffer in shared memory
- * - SharedMemory: Shared memory manager
+ * This file provides the shared memory infrastructure for multi-process
+ * logging mode (MProc). Key components:
  *
- * 本文件包含：
- * - SharedRingBuffer：共享内存中的环形队列
- * - SharedMemory：共享内存管理器
+ * 本文件提供多进程日志模式（MProc）的共享内存基础设施。主要组件：
+ *
+ * - SharedRingBuffer: Ring buffer in POSIX shared memory for cross-process IPC
+ *   SharedRingBuffer：POSIX 共享内存中的环形队列，用于跨进程 IPC
+ * - SharedMemory: Manager class for shared memory lifecycle
+ *   SharedMemory：共享内存生命周期管理类
+ * - SharedLoggerConfig: Cross-process logger configuration synchronization
+ *   SharedLoggerConfig：跨进程日志器配置同步
+ * - ProcessThreadNameTable: Shared name-ID mapping for process/module names
+ *   ProcessThreadNameTable：进程/模块名的共享名称-ID 映射
+ *
+ * Architecture / 架构:
+ * - Owner process creates shared memory and initializes all structures
+ *   所有者进程创建共享内存并初始化所有结构
+ * - Client processes connect to existing shared memory
+ *   客户端进程连接到现有共享内存
+ * - Magic number and version validation ensures compatibility
+ *   魔数和版本验证确保兼容性
+ *
+ * Memory Layout / 内存布局:
+ * +------------------------+
+ * | SharedMemoryMetadata   |  Header with offsets and validation
+ * +------------------------+
+ * | SharedLoggerConfig     |  Runtime log level configuration
+ * +------------------------+
+ * | ProcessThreadNameTable |  Name-ID mappings
+ * +------------------------+
+ * | SharedRingBuffer       |  Log entry queue
+ * +------------------------+
+ *
+ * @see HeapRingBuffer for single-process async mode
+ * @see PipelineThread for HeapRingBuffer to SharedRingBuffer transfer
  *
  * @copyright Copyright (c) 2024 onePlog
  */

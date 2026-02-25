@@ -3,15 +3,40 @@
  * @brief Static format and sink types for Logger
  * @brief Logger 的静态格式化器和 Sink 类型
  *
- * This file provides the static format and sink types that can be used
- * with Logger's SinkBinding system:
- * - MessageOnlyFormat: Message only, no metadata
+ * This file provides predefined format and sink types that can be used
+ * with Logger's SinkBinding system. All types are designed for compile-time
+ * configuration and zero virtual call overhead.
+ *
+ * 本文件提供可与 Logger 的 SinkBinding 系统一起使用的预定义格式和 Sink 类型。
+ * 所有类型都设计为编译期配置和零虚函数调用开销。
+ *
+ * Format Types / 格式类型:
+ * - MessageOnlyFormat: Message only, no metadata (like spdlog's %v)
+ *   MessageOnlyFormat：仅消息，无元数据（类似 spdlog 的 %v）
  * - SimpleFormat: [HH:MM:SS] [LEVEL] message
+ *   SimpleFormat：[HH:MM:SS] [LEVEL] message
  * - FullFormat: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message
+ *   FullFormat：[YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [PID:TID] message
+ *
+ * Sink Types / Sink 类型:
+ * - NullSinkType: Discards all output (for benchmarking)
+ *   NullSinkType：丢弃所有输出（用于基准测试）
  * - ConsoleSinkType: Writes to stdout
+ *   ConsoleSinkType：写入 stdout
  * - StderrSinkType: Writes to stderr
- * - NullSinkType: Discards all output
- * - FileSinkType: Writes to file
+ *   StderrSinkType：写入 stderr
+ * - FileSinkType: Writes to file with rotation support
+ *   FileSinkType：写入文件，支持轮转
+ *
+ * Each format type declares its StaticFormatRequirements, enabling
+ * Logger to conditionally acquire only the needed metadata.
+ *
+ * 每个格式类型声明其 StaticFormatRequirements，使 Logger 能够
+ * 有条件地只获取所需的元数据。
+ *
+ * @see SinkBinding for binding sinks with formats
+ * @see SinkBindingList for managing multiple bindings
+ * @see LoggerConfig for compile-time configuration
  *
  * @copyright Copyright (c) 2024 onePlog
  */

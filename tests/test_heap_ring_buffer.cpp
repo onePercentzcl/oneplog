@@ -639,9 +639,12 @@ TEST(HeapRingBufferTest, ConcurrentPushPop) {
 
 #ifdef ONEPLOG_HAS_RAPIDCHECK
 
+// Note: To run with 1000+ iterations, set RC_PARAMS="max_success=1000" environment variable
+// 注意：要运行 1000+ 次迭代，设置 RC_PARAMS="max_success=1000" 环境变量
+
 /**
- * @brief Property 6: HeapRingBuffer FIFO order guarantee
- * @brief 属性 6：HeapRingBuffer FIFO 顺序保证
+ * @brief Property 1: HeapRingBuffer FIFO order guarantee
+ * @brief 属性 1：HeapRingBuffer FIFO 顺序保证
  *
  * For any sequence of enqueued elements [e1, e2, ..., eN], the dequeue order
  * should maintain FIFO order, i.e., elements enqueued first are dequeued first.
@@ -649,7 +652,8 @@ TEST(HeapRingBufferTest, ConcurrentPushPop) {
  * 对于任意入队元素序列 [e1, e2, ..., eN]，出队顺序应该保持 FIFO 顺序，
  * 即先入队的元素先出队。
  *
- * **Validates: Requirements 7.8**
+ * **Feature: oneplog-refactor-and-docs, Property 1: HeapRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.2**
  */
 RC_GTEST_PROP(HeapRingBufferPropertyTest, FIFOOrderGuarantee, ()) {
     // Generate random capacity (power of 2 for efficiency)
@@ -686,6 +690,9 @@ RC_GTEST_PROP(HeapRingBufferPropertyTest, FIFOOrderGuarantee, ()) {
 /**
  * @brief Property: Size is always consistent
  * @brief 属性：大小始终一致
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 1: HeapRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.2**
  */
 RC_GTEST_PROP(HeapRingBufferPropertyTest, SizeConsistency, ()) {
     auto capacity = *rc::gen::inRange(4, 64);
@@ -711,6 +718,9 @@ RC_GTEST_PROP(HeapRingBufferPropertyTest, SizeConsistency, ()) {
 /**
  * @brief Property: Never exceeds capacity
  * @brief 属性：永远不超过容量
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 1: HeapRingBuffer FIFO 顺序**
+ * **Validates: Requirements 5.2**
  */
 RC_GTEST_PROP(HeapRingBufferPropertyTest, NeverExceedsCapacity, ()) {
     auto capacity = *rc::gen::inRange(4, 64);

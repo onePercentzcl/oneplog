@@ -3,6 +3,34 @@
  * @brief Binary snapshot for capturing log arguments
  * @brief 用于捕获日志参数的二进制快照
  *
+ * BinarySnapshot provides efficient binary serialization of log arguments
+ * for deferred formatting in async logging mode. Key features:
+ *
+ * BinarySnapshot 为异步日志模式中的延迟格式化提供高效的日志参数二进制序列化。
+ * 主要特性：
+ *
+ * - Zero-copy capture for string literals and string_view (pointer + length)
+ *   字符串字面量和 string_view 的零拷贝捕获（指针 + 长度）
+ * - Inline copy for dynamic strings (std::string, char*)
+ *   动态字符串的内联拷贝（std::string、char*）
+ * - Direct binary storage for primitive types (int, float, etc.)
+ *   基本类型的直接二进制存储（int、float 等）
+ * - Type-tagged format for runtime type identification without RTTI
+ *   类型标记格式，无需 RTTI 即可运行时类型识别
+ * - Pointer-to-data conversion for cross-process transfer
+ *   用于跨进程传输的指针到数据转换
+ *
+ * Usage Pattern / 使用模式:
+ * 1. Producer captures arguments: snapshot.Capture(arg1, arg2, ...)
+ *    生产者捕获参数：snapshot.Capture(arg1, arg2, ...)
+ * 2. Snapshot stored in ring buffer slot
+ *    快照存储在环形队列槽位中
+ * 3. Consumer formats: snapshot.FormatAll() or snapshot.Format(fmt)
+ *    消费者格式化：snapshot.FormatAll() 或 snapshot.Format(fmt)
+ *
+ * @see LogEntry for the complete log entry structure
+ * @see PipelineThread for pointer conversion in MProc mode
+ *
  * @copyright Copyright (c) 2024 onePlog
  */
 

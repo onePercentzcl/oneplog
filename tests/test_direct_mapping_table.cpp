@@ -7,6 +7,10 @@
  */
 
 #include <gtest/gtest.h>
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+#include <rapidcheck.h>
+#include <rapidcheck/gtest.h>
+#endif
 
 #include <oneplog/internal/direct_mapping_table.hpp>
 
@@ -303,6 +307,106 @@ TEST(ExtendedDirectMappingTableTest, LongerNames) {
     EXPECT_TRUE(table.Register(2, name50));
     EXPECT_EQ(table.GetName(2).length(), 31);
 }
+
+// ==============================================================================
+// Property-Based Tests / 属性测试
+// ==============================================================================
+
+#ifdef ONEPLOG_HAS_RAPIDCHECK
+
+// Note: To run with 1000+ iterations, set RC_PARAMS="max_success=1000" environment variable
+// 注意：要运行 1000+ 次迭代，设置 RC_PARAMS="max_success=1000" 环境变量
+
+/**
+ * @brief Property 7: Mapping table storage and lookup consistency
+ * @brief 属性 7：映射表存储查找一致性
+ *
+ * For any registered (TID, name) pair, GetName(TID) should return the
+ * registered name (possibly truncated to kMaxNameLength).
+ *
+ * 对于任意注册的 (TID, name) 对，GetName(TID) 应返回注册的名称
+ * （可能被截断到 kMaxNameLength）。
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 7: 映射表存储查找一致性**
+ * **Validates: Requirements 5.9**
+ */
+RC_GTEST_PROP(DirectMappingTablePropertyTest, StorageLookupConsistency, ()) {
+    DirectMappingTable<1024, 15> table;
+    
+    // Generate random TID within valid range / 生成有效范围内的随机 TID
+    auto tid = *rc::gen::inRange<uint32_t>(0, 1024);
+    
+    // Generate random name / 生成随机名称
+    auto name = *rc::gen::nonEmpty<std::string>();
+    
+    // Register / 注册
+    bool registered = table.Register(tid, name);
+    RC_ASSERT(registered);
+    
+    // Lookup / 查找
+    std::string_view result = table.GetName(tid);
+    
+    // Result should match (truncated if necessary) / 结果应匹配（必要时截断）
+    if (name.length() <= 15) {
+        RC_ASSERT(result == name);
+    } else {
+        RC_ASSERT(result == name.substr(0, 15));
+    }
+}
+
+/**
+ * @brief Property: Out of range TID returns default
+ * @brief 属性：超出范围的 TID 返回默认值
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 7: 映射表存储查找一致性**
+ * **Validates: Requirements 5.9**
+ */
+RC_GTEST_PROP(DirectMappingTablePropertyTest, OutOfRangeReturnsDefault, ()) {
+    DirectMappingTable<1024, 15> table;
+    
+    // Generate TID outside valid range / 生成有效范围外的 TID
+    auto tid = *rc::gen::inRange<uint32_t>(1024, UINT32_MAX);
+    
+    // Lookup should return default / 查找应返回默认值
+    std::string_view result = table.GetName(tid);
+    RC_ASSERT(result == "main");
+}
+
+/**
+ * @brief Property: Update preserves count
+ * @brief 属性：更新保持计数不变
+ *
+ * **Feature: oneplog-refactor-and-docs, Property 7: 映射表存储查找一致性**
+ * **Validates: Requirements 5.9**
+ */
+RC_GTEST_PROP(DirectMappingTablePropertyTest, UpdatePreservesCount, ()) {
+    DirectMappingTable<1024, 15> table;
+    
+    auto tid = *rc::gen::inRange<uint32_t>(0, 1024);
+    auto name1 = *rc::gen::nonEmpty<std::string>();
+    auto name2 = *rc::gen::nonEmpty<std::string>();
+    
+    // First registration / 第一次注册
+    table.Register(tid, name1);
+    size_t countAfterFirst = table.Count();
+    
+    // Update same TID / 更新相同 TID
+    table.Register(tid, name2);
+    size_t countAfterUpdate = table.Count();
+    
+    // Count should not change / 计数不应改变
+    RC_ASSERT(countAfterFirst == countAfterUpdate);
+    
+    // Should return updated name / 应返回更新后的名称
+    std::string_view result = table.GetName(tid);
+    if (name2.length() <= 15) {
+        RC_ASSERT(result == name2);
+    } else {
+        RC_ASSERT(result == name2.substr(0, 15));
+    }
+}
+
+#endif  // ONEPLOG_HAS_RAPIDCHECK
 
 }  // namespace test
 }  // namespace internal

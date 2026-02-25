@@ -3,6 +3,30 @@
  * @brief Lock-free memory pool for onePlog
  * @brief onePlog 无锁内存池
  *
+ * This file provides a high-performance lock-free memory pool for
+ * pre-allocated fixed-size objects. Key features:
+ *
+ * 本文件提供用于预分配固定大小对象的高性能无锁内存池。主要特性：
+ *
+ * - Lock-free allocation and deallocation using CAS operations
+ *   使用 CAS 操作的无锁分配和释放
+ * - Pre-allocated blocks to avoid runtime heap allocation
+ *   预分配块以避免运行时堆分配
+ * - Cache-line aligned blocks to prevent false sharing
+ *   缓存行对齐块以防止伪共享
+ * - Dynamic expansion support when pool is exhausted
+ *   池耗尽时的动态扩展支持
+ *
+ * Thread Safety / 线程安全性:
+ * - Multiple threads can allocate/deallocate concurrently
+ *   多线程可以并发分配/释放
+ * - Uses atomic compare-exchange for free list management
+ *   使用原子比较交换进行空闲链表管理
+ * - ABA problem mitigated by not reusing blocks immediately
+ *   通过不立即重用块来缓解 ABA 问题
+ *
+ * @see HeapRingBuffer for the primary use case
+ *
  * @copyright Copyright (c) 2024 onePlog
  */
 

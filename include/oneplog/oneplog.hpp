@@ -1,10 +1,35 @@
 /**
  * @file oneplog.hpp
- * @brief Main header file for onePlog
- * @brief onePlog 主头文件
+ * @brief Main header file for onePlog - High-performance C++ logging library
+ * @brief onePlog 主头文件 - 高性能 C++ 日志库
  *
- * Include this file to use all onePlog features.
- * 包含此文件以使用所有 onePlog 功能。
+ * Include this file to use all onePlog features. This is the recommended
+ * single-include header for most use cases.
+ * 包含此文件以使用所有 onePlog 功能。这是大多数用例推荐的单一包含头文件。
+ *
+ * @section features Features / 功能特性
+ * - Three operating modes: Sync, Async, MProc (multi-process)
+ *   三种运行模式：同步、异步、多进程
+ * - Compile-time configuration for zero-overhead abstraction
+ *   编译期配置实现零开销抽象
+ * - Lock-free ring buffer for high-throughput async logging
+ *   无锁环形队列实现高吞吐量异步日志
+ * - Shared memory support for cross-process logging
+ *   共享内存支持跨进程日志
+ *
+ * @section usage Basic Usage / 基本用法
+ * @code
+ * #include <oneplog/oneplog.hpp>
+ * 
+ * int main() {
+ *     oneplog::AsyncLogger logger;
+ *     logger.Info("Hello, {}!", "world");
+ *     return 0;
+ * }
+ * @endcode
+ *
+ * @see LoggerImpl for the main logger class
+ * @see LoggerConfig for compile-time configuration options
  *
  * @copyright Copyright (c) 2024 onePlog
  */
