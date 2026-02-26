@@ -70,11 +70,16 @@ set(ONEPLOG_HEADERS
 if(ONEPLOG_HEADER_ONLY)
     # Header-only library / 仅头文件库
     add_library(oneplog INTERFACE)
+    add_library(oneplog::oneplog ALIAS oneplog)
     target_include_directories(oneplog INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     )
-    target_compile_definitions(oneplog INTERFACE ONEPLOG_HEADER_ONLY)
+    # Header-only 模式下同时定义 ONEPLOG_HEADER_ONLY 和 FMT_HEADER_ONLY
+    target_compile_definitions(oneplog INTERFACE 
+        ONEPLOG_HEADER_ONLY
+        FMT_HEADER_ONLY
+    )
     
     # Platform-specific libraries / 平台特定库
     if(UNIX AND NOT APPLE)
@@ -100,6 +105,8 @@ else()
     else()
         add_library(oneplog STATIC ${ONEPLOG_SOURCES})
     endif()
+    
+    add_library(oneplog::oneplog ALIAS oneplog)
     
     target_include_directories(oneplog PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
