@@ -37,6 +37,7 @@ Desktop.ini
 # Test output / 测试输出
 Testing/
 *.log
+*.log.*
 
 # Package directories / 包目录
 packages/
