@@ -427,7 +427,7 @@ struct SinkBindingList<> {
  * @brief 默认共享内存名称类型
  */
 struct DefaultSharedMemoryName {
-    static constexpr const char* value = "oneplog_shared";
+    static constexpr const char* value = "/oneplog_shared";
 };
 
 // ==============================================================================

@@ -324,11 +324,14 @@ public:
         
         size_t totalSize = CalculateRequiredSize(ringBufferCapacity);
         
+        // Try to create exclusively - if it already exists, return nullptr
+        // so caller can try Connect() instead
+        // 尝试独占创建 - 如果已存在，返回 nullptr 让调用者尝试 Connect()
         int fd = shm_open(name.c_str(), O_CREAT | O_RDWR | O_EXCL, 0666);
         if (fd < 0) {
-            shm_unlink(name.c_str());
-            fd = shm_open(name.c_str(), O_CREAT | O_RDWR | O_EXCL, 0666);
-            if (fd < 0) { return nullptr; }
+            // Shared memory already exists, don't delete it!
+            // 共享内存已存在，不要删除它！
+            return nullptr;
         }
         
         if (ftruncate(fd, static_cast<off_t>(totalSize)) < 0) {

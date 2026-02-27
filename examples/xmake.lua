@@ -86,5 +86,15 @@ example_target("example_sync", "example_sync.cpp")
 -- Async mode example / 异步模式示例
 example_target("example_async", "example_async.cpp")
 
--- Multi-process mode example / 多进程模式示例
+-- Multi-process mode examples / 多进程模式示例
+-- API demonstration (single process) / API 演示（单进程）
 example_target("example_mproc", "example_mproc.cpp")
+
+-- Fork-based multi-process (POSIX only) / 基于 fork 的多进程（仅 POSIX）
+example_target("example_mproc_fork", "example_mproc_fork.cpp")
+
+-- Standalone multi-process: owner (run first) / 独立多进程：所有者（先运行）
+example_target("example_mproc_owner", "example_mproc_owner.cpp")
+
+-- Standalone multi-process: worker (run after owner) / 独立多进程：工作者（在所有者之后运行）
+example_target("example_mproc_worker", "example_mproc_worker.cpp")

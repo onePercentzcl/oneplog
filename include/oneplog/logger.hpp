@@ -998,16 +998,30 @@ private:
                 Config::SharedMemoryName::value);
             
             if (m_sharedMemory) {
-                // Successfully connected - we are a consumer
+                // Successfully connected - we are a consumer (producer of logs)
                 m_isMProcOwner = false;
+                
+                // Create HeapRingBuffer for local buffering
+                // 创建 HeapRingBuffer 用于本地缓冲
+                m_ringBuffer = std::make_unique<
+                    internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>
+                >(kHeapRingBufferCapacity, kQueueFullPolicy);
+                
+                // Create and start PipelineThread to transfer from HeapRingBuffer to SharedRingBuffer
+                // 创建并启动 PipelineThread 将日志从 HeapRingBuffer 传输到 SharedRingBuffer
+                m_pipelineThread = std::make_unique<PipelineThread<kEnableWFC, kEnableShadowTail>>(
+                    *m_ringBuffer, *m_sharedMemory);
+                m_pipelineThread->SetPollInterval(m_runtimeConfig.pollInterval);
+                m_pipelineThread->SetPollTimeout(Config::kPollTimeout);
+                m_pipelineThread->Start();
                 
                 // Register process name if provided
                 if (!m_runtimeConfig.processName.empty()) {
                     m_sharedMemory->RegisterProcess(m_runtimeConfig.processName);
                 }
                 
-                // Start WriterThread to consume from SharedRingBuffer
-                StartMProcWorker();
+                // Note: Consumer does NOT start WriterThread - only owner writes to sinks
+                // 注意：消费者不启动 WriterThread - 只有 owner 写入 sink
             } else {
                 // Failed to connect - fall back to async mode
                 std::fprintf(stderr, "[oneplog] SharedMemory creation/connection failed, "
