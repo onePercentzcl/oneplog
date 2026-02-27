@@ -310,6 +310,9 @@ public:
         // Must stop worker before any member is destroyed
         if constexpr (kMode == Mode::MProc) {
             StopMProcWorker();
+            // Clear global MProc shared memory pointer
+            // 清除全局 MProc 共享内存指针
+            internal::SetGlobalMProcSharedMemory(nullptr);
         } else if constexpr (kMode == Mode::Async) {
             StopWorker();
         }
@@ -703,6 +706,9 @@ public:
     void Shutdown() noexcept {
         if constexpr (kMode == Mode::MProc) {
             StopMProcWorker();
+            // Clear global MProc shared memory pointer
+            // 清除全局 MProc 共享内存指针
+            internal::SetGlobalMProcSharedMemory(nullptr);
         } else if constexpr (kMode == Mode::Async) {
             StopWorker();
         }
@@ -973,6 +979,10 @@ private:
             // Successfully created - we are the owner (producer)
             m_isMProcOwner = true;
             
+            // Set global MProc shared memory pointer for SetProcessName/SetModuleName
+            // 设置全局 MProc 共享内存指针，供 SetProcessName/SetModuleName 使用
+            internal::SetGlobalMProcSharedMemory(m_sharedMemory.get());
+            
             // Create HeapRingBuffer for local buffering
             m_ringBuffer = std::make_unique<
                 internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>
@@ -1000,6 +1010,10 @@ private:
             if (m_sharedMemory) {
                 // Successfully connected - we are a consumer (producer of logs)
                 m_isMProcOwner = false;
+                
+                // Set global MProc shared memory pointer for SetProcessName/SetModuleName
+                // 设置全局 MProc 共享内存指针，供 SetProcessName/SetModuleName 使用
+                internal::SetGlobalMProcSharedMemory(m_sharedMemory.get());
                 
                 // Create HeapRingBuffer for local buffering
                 // 创建 HeapRingBuffer 用于本地缓冲

@@ -63,6 +63,23 @@
 namespace oneplog {
 
 // ==============================================================================
+// Forward Declarations / 前向声明
+// ==============================================================================
+
+namespace internal {
+
+// Forward declaration of SharedMemory
+template<bool EnableWFC, bool EnableShadowTail>
+class SharedMemory;
+
+// Note: IMProcSharedMemory interface and GetGlobalMProcSharedMemory/SetGlobalMProcSharedMemory
+// are defined in common.hpp to avoid circular dependencies
+// 注意：IMProcSharedMemory 接口和 GetGlobalMProcSharedMemory/SetGlobalMProcSharedMemory
+// 定义在 common.hpp 中以避免循环依赖
+
+}  // namespace internal
+
+// ==============================================================================
 // Compile-time Configuration / 编译期配置
 // ==============================================================================
 
@@ -117,12 +134,20 @@ inline std::string& GetGlobalProcessName() {
  * @brief Set global process name (call once at startup)
  * @brief 设置全局进程名（启动时调用一次）
  * @note Name is truncated to kMaxNameLength characters / 名称会被截断到 kMaxNameLength 字符
+ * @note In MProc mode, this also registers to shared memory / 在 MProc 模式下，也会注册到共享内存
  */
 inline void SetProcessName(const std::string& name) {
+    std::string truncatedName = name;
     if (name.length() > config::kMaxNameLength) {
-        internal::GetGlobalProcessName() = name.substr(0, config::kMaxNameLength);
-    } else {
-        internal::GetGlobalProcessName() = name;
+        truncatedName = name.substr(0, config::kMaxNameLength);
+    }
+    internal::GetGlobalProcessName() = truncatedName;
+    
+    // Register to MProc shared memory if available
+    // 如果可用，则注册到 MProc 共享内存
+    auto* shm = internal::GetGlobalMProcSharedMemory();
+    if (shm) {
+        shm->RegisterProcess(truncatedName);
     }
 }
 
@@ -188,20 +213,29 @@ inline void RegisterModuleName();
  * @brief 设置当前线程的模块名
  *
  * In Async/MProc mode, this automatically registers to the global table.
+ * In MProc mode, this also registers to shared memory.
  * 在 Async/MProc 模式下，会自动注册到全局表。
+ * 在 MProc 模式下，也会注册到共享内存。
  * @note Name is truncated to kMaxNameLength characters / 名称会被截断到 kMaxNameLength 字符
  */
 inline void SetModuleName(const std::string& name) {
+    std::string truncatedName = name;
     if (name.length() > config::kMaxNameLength) {
-        internal::GetTlsModuleName() = name.substr(0, config::kMaxNameLength);
-    } else {
-        internal::GetTlsModuleName() = name;
+        truncatedName = name.substr(0, config::kMaxNameLength);
     }
+    internal::GetTlsModuleName() = truncatedName;
     
     // Auto-register to global table if enabled (Async/MProc mode)
     // 如果启用了自动注册（Async/MProc 模式），则自动注册到全局表
     if (internal::GetAutoRegisterFlag().load(std::memory_order_acquire)) {
         RegisterModuleName();
+    }
+    
+    // Register to MProc shared memory if available
+    // 如果可用，则注册到 MProc 共享内存
+    auto* shm = internal::GetGlobalMProcSharedMemory();
+    if (shm) {
+        shm->RegisterThread(truncatedName);
     }
 }
 

@@ -313,7 +313,7 @@ struct alignas(kCacheLineSize) ProcessThreadNameTable {
 // ==============================================================================
 
 template<bool EnableWFC = true, bool EnableShadowTail = true>
-class SharedMemory {
+class SharedMemory : public IMProcSharedMemory {
 public:
     static std::unique_ptr<SharedMemory> Create(
         const std::string& name,

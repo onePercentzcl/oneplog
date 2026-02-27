@@ -397,4 +397,48 @@ constexpr bool IsError(ErrorCode code) noexcept {
 
 }  // namespace oneplog
 
+// ==============================================================================
+// MProc Shared Memory Interface / MProc 共享内存接口
+// ==============================================================================
+
+namespace oneplog {
+namespace internal {
+
+/**
+ * @brief Type-erased interface for MProc shared memory registration
+ * @brief MProc 共享内存注册的类型擦除接口
+ *
+ * This interface allows SetProcessName/SetModuleName to register names
+ * to shared memory without knowing the concrete SharedMemory type.
+ *
+ * 此接口允许 SetProcessName/SetModuleName 在不知道具体 SharedMemory 类型的情况下
+ * 将名称注册到共享内存。
+ */
+class IMProcSharedMemory {
+public:
+    virtual ~IMProcSharedMemory() = default;
+    virtual uint32_t RegisterProcess(const std::string& name) = 0;
+    virtual uint32_t RegisterThread(const std::string& name) = 0;
+};
+
+/**
+ * @brief Get global pointer to current MProc shared memory
+ * @brief 获取当前 MProc 共享内存的全局指针
+ */
+inline IMProcSharedMemory*& GetGlobalMProcSharedMemory() {
+    static IMProcSharedMemory* ptr = nullptr;
+    return ptr;
+}
+
+/**
+ * @brief Set the global MProc shared memory pointer
+ * @brief 设置全局 MProc 共享内存指针
+ */
+inline void SetGlobalMProcSharedMemory(IMProcSharedMemory* shm) {
+    GetGlobalMProcSharedMemory() = shm;
+}
+
+}  // namespace internal
+}  // namespace oneplog
+
 #endif  // ONEPLOG_COMMON_HPP

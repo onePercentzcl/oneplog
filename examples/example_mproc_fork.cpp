@@ -58,6 +58,10 @@ void ChildProcess(int childId) {
     
     ForkMProcLogger logger(config);
     
+    // Use unified API to set process name (will register to shared memory automatically)
+    // 使用统一 API 设置进程名（会自动注册到共享内存）
+    oneplog::SetProcessName("Child" + std::to_string(childId));
+    
     if (logger.IsMProcOwner()) {
         std::cerr << "[Child " << childId << "] WARNING: Became owner unexpectedly\n";
     } else {
@@ -90,6 +94,10 @@ int main() {
     config.processName = "Parent";
     
     ForkMProcLogger logger(config);
+    
+    // Use unified API to set process name (will register to shared memory automatically)
+    // 使用统一 API 设置进程名（会自动注册到共享内存）
+    oneplog::SetProcessName("Parent");
     
     if (!logger.IsMProcOwner()) {
         std::cerr << "[Parent] ERROR: Should be owner but isn't!\n";

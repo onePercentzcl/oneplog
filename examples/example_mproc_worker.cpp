@@ -54,7 +54,10 @@ int main(int argc, char* argv[]) {
     config.processName = workerName;
     
     oneplog::MProcLogger logger(config);
-    logger.RegisterProcess(workerName.c_str());
+    
+    // Use unified API to set process name (will register to shared memory automatically)
+    // 使用统一 API 设置进程名（会自动注册到共享内存）
+    oneplog::SetProcessName(workerName);
     
     if (logger.IsMProcOwner()) {
         std::cerr << "[" << workerName << "] WARNING: This process became the owner!" << std::endl;
