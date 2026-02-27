@@ -709,8 +709,14 @@ public:
             // Clear global MProc shared memory pointer
             // 清除全局 MProc 共享内存指针
             internal::SetGlobalMProcSharedMemory(nullptr);
+            // Disable auto-registration for module names
+            // 禁用模块名自动注册
+            SetAutoRegisterModuleName(false);
         } else if constexpr (kMode == Mode::Async) {
             StopWorker();
+            // Disable auto-registration for module names
+            // 禁用模块名自动注册
+            SetAutoRegisterModuleName(false);
         }
         m_sinkBindings.CloseAll();
     }
@@ -949,6 +955,10 @@ private:
      * _Requirements: 4.1, 4.2_
      */
     void InitAsync() {
+        // Enable auto-registration for module names
+        // 启用模块名自动注册
+        SetAutoRegisterModuleName(true);
+        
         m_ringBuffer = std::make_unique<
             internal::HeapRingBuffer<LogEntry, kEnableWFC, kEnableShadowTail>
         >(kHeapRingBufferCapacity, kQueueFullPolicy);
@@ -969,6 +979,10 @@ private:
      * _Requirements: 5.1, 5.2, 5.3_
      */
     void InitMProc() {
+        // Enable auto-registration for module names
+        // 启用模块名自动注册
+        SetAutoRegisterModuleName(true);
+        
         // Try to create shared memory (as owner/producer)
         m_sharedMemory = internal::SharedMemory<kEnableWFC, kEnableShadowTail>::Create(
             Config::SharedMemoryName::value,

@@ -268,8 +268,9 @@ struct SimpleFormat {
 #endif
         
         // Get process and module names / 获取进程名和模块名
-        std::string procName = internal::FormatFixedWidthName(
-            entry.processId == 0 ? GetProcessName() : std::to_string(entry.processId));
+        // In async mode, always use GetProcessName() for process name
+        // 在异步模式下，始终使用 GetProcessName() 获取进程名
+        std::string procName = internal::FormatFixedWidthName(GetProcessName());
         std::string modName = internal::FormatFixedWidthName(
             LookupModuleName(entry.threadId));
         
@@ -433,8 +434,9 @@ struct FullFormat {
 #endif
         
         // Get process and module names / 获取进程名和模块名
-        std::string procName = internal::FormatFixedWidthName(
-            entry.processId == 0 ? GetProcessName() : std::to_string(entry.processId));
+        // In async mode, always use GetProcessName() for process name
+        // 在异步模式下，始终使用 GetProcessName() 获取进程名
+        std::string procName = internal::FormatFixedWidthName(GetProcessName());
         std::string modName = internal::FormatFixedWidthName(
             LookupModuleName(entry.threadId));
         
@@ -616,8 +618,9 @@ struct FileFormat {
 #endif
         
         // Get process and module names / 获取进程名和模块名
-        std::string procName = internal::FormatFixedWidthName(
-            entry.processId == 0 ? GetProcessName() : std::to_string(entry.processId));
+        // In async mode, always use GetProcessName() for process name
+        // 在异步模式下，始终使用 GetProcessName() 获取进程名
+        std::string procName = internal::FormatFixedWidthName(GetProcessName());
         std::string modName = internal::FormatFixedWidthName(
             LookupModuleName(entry.threadId));
         
